@@ -1,0 +1,6 @@
+{
+  "summary": "Plano de implementação completo para o aplicativo web responsivo da Igreja Presbiteriana Central, abrangendo perfis de Gestor e Usuário, Bíblia conectada via API configurável, boletins em PDF e texto, aniversariantes com importação CSV, 3 posições de banners rotativos e painel administrativo modular.",
+  "updatedAt": "2026-10-18T14:29:07.056523638Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

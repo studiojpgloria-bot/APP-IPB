@@ -1,0 +1,6 @@
+{
+  "name": "Igreja Presbiteriana Central",
+  "description": "Aplicativo web responsivo para membros e visitantes da Igreja Presbiteriana Central, com Bíblia, boletins, aniversariantes, avisos e painel do gestor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

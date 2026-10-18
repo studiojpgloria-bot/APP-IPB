@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-primary: #344E41;
+    --color-primary-light: #4A6B5D;
+    --color-primary-surface: #EAF0EC;
+    --color-accent: #B08938;
+    --color-warm-bg: #FAF9F6;
+    --color-warm-surface: #FFFFFF;
+    --color-warm-border: #E8E6DF;
+    --color-warm-muted: #6B6862;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #FAF9F6;
+    color: #2D312E;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .font-scripture {
+    font-family: 'Lora', Georgia, serif;
+  }
+}
+
+/* Ensure that inside the 430px Mobile App Simulator container, desktop breakpoints behave as mobile */
+.mobile-app-shell .sm\:grid-cols-2,
+.mobile-app-shell .sm\:grid-cols-3,
+.mobile-app-shell .sm\:grid-cols-4,
+.mobile-app-shell .md\:grid-cols-2,
+.mobile-app-shell .md\:grid-cols-3,
+.mobile-app-shell .md\:grid-cols-4,
+.mobile-app-shell .lg\:grid-cols-2,
+.mobile-app-shell .lg\:grid-cols-3,
+.mobile-app-shell .lg\:grid-cols-4 {
+  grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+}
+
+.mobile-app-shell .sm\:flex-row,
+.mobile-app-shell .md\:flex-row,
+.mobile-app-shell .lg\:flex-row {
+  flex-direction: column !important;
+  align-items: stretch !important;
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #D5D2C8;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A9A59B;
+}
