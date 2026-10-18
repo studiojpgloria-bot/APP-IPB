@@ -1,0 +1,129 @@
+{
+  "entities": {
+    "ChurchRegistry": {
+      "title": "ChurchRegistry",
+      "description": "Singleton document in church_config/registry that locks the primary owner (First Manager) of the church to prevent duplicate church accounts.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Firebase Auth UID of the primary first manager who registered the church."
+        },
+        "ownerEmail": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Email address of the primary manager."
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Full name of the primary manager."
+        },
+        "churchName": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Name of the church configured by the primary manager."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["ownerUid", "ownerEmail", "ownerName", "churchName", "createdAt", "updatedAt"]
+    },
+    "ChurchManager": {
+      "title": "ChurchManager",
+      "description": "Manager account document in church_managers/{uid} tracking approval status by the primary church owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Firebase Auth UID matching the document ID."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Manager email address."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Manager display name."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "co_manager"],
+          "maxLength": 32,
+          "description": "Role in the church management team."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["approved", "pending", "revoked"],
+          "maxLength": 32,
+          "description": "Approval status controlled by the primary owner."
+        },
+        "requestedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the account requested access."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last status update."
+        }
+      },
+      "required": ["uid", "email", "name", "role", "status", "requestedAt", "updatedAt"]
+    },
+    "ChurchPublicData": {
+      "title": "ChurchPublicData",
+      "description": "Public church data document in church_data/{docId} readable by all congregation members and writable only by approved church managers.",
+      "type": "object",
+      "properties": {
+        "docType": {
+          "type": "string",
+          "enum": ["info", "bulletins", "birthdays", "deacons", "banners", "settings"],
+          "maxLength": 32,
+          "description": "Identifier of the church module data."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Structured module data map for the church."
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the approved manager who saved this update."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the update."
+        }
+      },
+      "required": ["docType", "payload", "updatedByUid", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/church_config/{configId}": {
+      "schema": { "$ref": "#/entities/ChurchRegistry" },
+      "description": "Stores the singleton 'registry' document locking the first manager of the church."
+    },
+    "/church_managers/{managerUid}": {
+      "schema": { "$ref": "#/entities/ChurchManager" },
+      "description": "Stores manager accounts and their approval status ('approved', 'pending', 'revoked')."
+    },
+    "/church_data/{moduleId}": {
+      "schema": { "$ref": "#/entities/ChurchPublicData" },
+      "description": "Stores public church content modules ('info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings')."
+    }
+  }
+}

@@ -163,3 +163,26 @@ export interface BibleChapterData {
   chapter: number;
   verses: BibleVerse[];
 }
+
+export interface ChurchRegistry {
+  ownerUid: string;
+  ownerEmail: string;
+  ownerName: string;
+  churchName: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export type ManagerRole = 'owner' | 'co_manager';
+export type ManagerApprovalStatus = 'approved' | 'pending' | 'revoked';
+
+export interface ChurchManagerAccount {
+  uid: string;
+  email: string;
+  name: string;
+  role: ManagerRole;
+  status: ManagerApprovalStatus;
+  requestedAt?: unknown;
+  updatedAt?: unknown;
+}
+

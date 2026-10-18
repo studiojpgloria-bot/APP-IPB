@@ -52,11 +52,23 @@ import {
 } from '../../types';
 import { CATEGORY_META } from './DeaconScheduleView';
 
-type ManagerTab = 'info' | 'bulletins' | 'deacons' | 'birthdays' | 'banners' | 'settings';
+type ManagerTab = 'info' | 'bulletins' | 'deacons' | 'birthdays' | 'banners' | 'team' | 'settings';
 
 export const ManagerView: React.FC = () => {
   const {
     isManagerAuthenticated,
+    firebaseUser,
+    currentManagerAccount,
+    churchRegistry,
+    allManagers,
+    isPrimaryOwner,
+    isCloudSynced,
+    loginWithGoogleCloud,
+    registerManagerWithEmailCloud,
+    loginManagerWithEmailCloud,
+    approveOrRevokeManager,
+    removePendingManager,
+    syncLocalDataToCloud,
     managerLogin,
     managerLogout,
     churchInfo,
@@ -90,9 +102,14 @@ export const ManagerView: React.FC = () => {
   // Active Tab
   const [activeTab, setActiveTab] = useState<ManagerTab>('info');
 
-  // Login Form State
-  const [loginEmail, setLoginEmail] = useState('gestor@igreja.com.br');
-  const [loginPassword, setLoginPassword] = useState('admin123');
+  // Login / Register Form State
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authName, setAuthName] = useState('');
+  const [authChurchName, setAuthChurchName] = useState(churchInfo.name);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authErrorMsg, setAuthErrorMsg] = useState<string | null>(null);
 
   // --- Church Info Form State ---
   const [infoForm, setInfoForm] = useState<ChurchInfo>(churchInfo);
@@ -190,16 +207,58 @@ export const ManagerView: React.FC = () => {
     setSettingsForm(settings);
   }, [settings]);
 
-  // Quick fill demo login
-  const handleQuickDemoLogin = () => {
-    setLoginEmail('gestor@igreja.com.br');
-    setLoginPassword('admin123');
-    managerLogin('gestor@igreja.com.br', 'admin123');
+  // Cloud Google Auth Handler
+  const handleGoogleAuth = async () => {
+    setAuthErrorMsg(null);
+    setAuthLoading(true);
+    try {
+      await loginWithGoogleCloud(authChurchName);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAuthErrorMsg(
+        msg.includes('popup-closed')
+          ? 'Janela de login fechada antes de concluir.'
+          : `Não foi possível autenticar com o Google: ${msg}`
+      );
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  // Cloud Email/Password Submit (Login or Register)
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    managerLogin(loginEmail, loginPassword);
+    setAuthErrorMsg(null);
+    setAuthLoading(true);
+    try {
+      if (authMode === 'register') {
+        if (!authName.trim()) {
+          setAuthErrorMsg('Informe seu nome completo para criar a conta de gestor.');
+          setAuthLoading(false);
+          return;
+        }
+        await registerManagerWithEmailCloud(authName, loginEmail, loginPassword, authChurchName);
+      } else {
+        await loginManagerWithEmailCloud(loginEmail, loginPassword);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('operation-not-allowed')) {
+        setAuthErrorMsg(
+          'O provedor de E-mail/Senha ainda não foi ativado no console do Firebase. Use o botão "Continuar com Conta Google" acima (já ativo!), ou ative E-mail/Senha em Authentication > Sign-in method no Firebase.'
+        );
+      } else if (msg.includes('email-already-in-use')) {
+        setAuthErrorMsg('Este e-mail já possui cadastro. Mude para a aba "Entrar na Conta".');
+      } else if (msg.includes('invalid-credential') || msg.includes('wrong-password') || msg.includes('user-not-found')) {
+        setAuthErrorMsg('E-mail ou senha incorretos. Se ainda não tem conta no banco, clique em "Criar Conta de Gestor".');
+      } else if (msg.includes('weak-password')) {
+        setAuthErrorMsg('A senha deve ter pelo menos 6 caracteres.');
+      } else {
+        setAuthErrorMsg(`Erro na autenticação: ${msg}`);
+      }
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   // Image Upload with Canvas Compression
@@ -629,21 +688,229 @@ export const ManagerView: React.FC = () => {
     showToast('Backup exportado com sucesso!');
   };
 
-  // IF NOT AUTHENTICATED: Show login card
-  if (!isManagerAuthenticated) {
+  const pendingManagersCount = allManagers.filter((m) => m.status === 'pending').length;
+
+  // IF USER IS LOGGED INTO FIREBASE BUT PENDING APPROVAL BY THE 1ST MANAGER:
+  if (firebaseUser && currentManagerAccount && currentManagerAccount.status !== 'approved') {
+    const isRevoked = currentManagerAccount.status === 'revoked';
     return (
-      <div className="max-w-md mx-auto my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-6">
+      <div className="max-w-lg mx-auto my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-6 text-center">
+        <div
+          className={`w-16 h-16 rounded-2xl mx-auto flex items-center justify-center ${
+            isRevoked ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'
+          }`}
+        >
+          {isRevoked ? <Lock className="w-8 h-8" /> : <Clock className="w-8 h-8" />}
+        </div>
+
+        <div className="space-y-2">
+          <span
+            className={`text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full inline-block ${
+              isRevoked ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-900'
+            }`}
+          >
+            {isRevoked ? 'Acesso Revogado' : 'Aguardando Liberação do 1º Gestor'}
+          </span>
+          <h1 className="text-2xl font-serif font-bold text-stone-900">
+            {isRevoked
+              ? 'Seu acesso administrativo foi desativado'
+              : 'Solicitação de Gestor Enviada!'}
+          </h1>
+          <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+            {isRevoked ? (
+              <>
+                O Administrador Principal da <strong>{churchRegistry?.churchName || churchInfo.name}</strong> revogou a
+                permissão desta conta (<strong>{currentManagerAccount.email}</strong>).
+              </>
+            ) : (
+              <>
+                Para evitar duplicidade de contas da mesma igreja, apenas o{' '}
+                <strong>1º Gestor Principal ({churchRegistry?.ownerName || churchRegistry?.ownerEmail})</strong> pode
+                liberar novos gestores. Assim que ele aprovar seu cadastro no painel em{' '}
+                <strong>&ldquo;Gestores &amp; Acessos&rdquo;</strong>, esta tela abrirá automaticamente!
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 text-left text-xs space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-stone-500">Sua Conta:</span>
+            <span className="font-bold text-stone-900">{currentManagerAccount.name}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-stone-500">E-mail:</span>
+            <span className="font-mono text-stone-800">{currentManagerAccount.email}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-stone-500">Igreja Vinculada:</span>
+            <span className="font-bold text-[#344E41]">{churchRegistry?.churchName || churchInfo.name}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-stone-500">1º Gestor Responsável:</span>
+            <span className="font-semibold text-stone-800">
+              {churchRegistry?.ownerName} ({churchRegistry?.ownerEmail})
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={managerLogout}
+            className="min-h-[44px] px-5 py-2.5 rounded-xl border border-stone-200 hover:bg-stone-100 text-xs font-semibold text-stone-700 flex items-center gap-2 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sair desta Conta</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // IF NOT AUTHENTICATED: Show Cloud Login / Registration Card with Anti-Duplication Status
+  if (!isManagerAuthenticated) {
+    const hasPrimaryOwner = Boolean(churchRegistry);
+
+    return (
+      <div className="max-w-md mx-auto my-6 sm:my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-6">
         <div className="text-center space-y-2">
           <div className="w-14 h-14 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center mx-auto mb-2">
             <Lock className="w-7 h-7" />
           </div>
           <h1 className="text-2xl font-serif font-bold text-stone-900 tracking-tight">Área do Gestor</h1>
-          <p className="text-xs text-stone-500">
-            Acesso administrativo para gerenciar conteúdos, cultos, boletins, aniversariantes e banners.
+          <p className="text-xs text-stone-500 leading-relaxed">
+            {!hasPrimaryOwner
+              ? 'Crie a conta do 1º Gestor Principal para registrar oficialmente sua igreja no banco de dados em nuvem.'
+              : `Igreja registrada por ${churchRegistry?.ownerName}. Novos cadastros ficam sujeitos à aprovação do 1º Gestor.`}
           </p>
         </div>
 
-        <form onSubmit={handleLoginSubmit} className="space-y-4">
+        {/* Status Banner of Church Ownership */}
+        <div
+          className={`p-3.5 rounded-2xl border text-xs space-y-1 ${
+            !hasPrimaryOwner
+              ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+              : 'bg-amber-50/80 border-amber-200 text-amber-950'
+          }`}
+        >
+          {!hasPrimaryOwner ? (
+            <>
+              <div className="font-bold flex items-center gap-1.5 text-emerald-900">
+                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
+                <span>Configuração do 1º Gestor Disponível</span>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                A primeira conta que se conectar será definida como <strong>Gestor Principal</strong> da igreja e terá o poder exclusivo de liberar outros gestores.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                <Shield className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>Proteção Contra Duplicidade Ativa</span>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Esta igreja já está vinculada ao 1º Gestor (<strong>{churchRegistry?.ownerName}</strong>). Se você é um novo líder, crie sua conta e aguarde a liberação dele.
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* Google One-Click Auth (Recommended in Firebase) */}
+        <div className="space-y-3">
+          {!hasPrimaryOwner && (
+            <div>
+              <label className="block text-xs font-bold text-stone-700 mb-1">
+                Nome Oficial da Igreja (para registro único)
+              </label>
+              <input
+                type="text"
+                value={authChurchName}
+                onChange={(e) => setAuthChurchName(e.target.value)}
+                placeholder="Ex: Igreja Presbiteriana Central"
+                className="w-full min-h-[42px] px-3.5 rounded-xl border border-stone-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
+              />
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={authLoading}
+            onClick={handleGoogleAuth}
+            className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] disabled:opacity-60 text-white font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2.5 shadow-xs"
+          >
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span>
+              {authLoading
+                ? 'Conectando ao Banco de Dados...'
+                : !hasPrimaryOwner
+                ? 'Criar Conta de 1º Gestor com Google'
+                : 'Entrar / Solicitar Acesso com Google'}
+            </span>
+          </button>
+        </div>
+
+        <div className="relative flex py-1 items-center">
+          <div className="flex-grow border-t border-stone-200" />
+          <span className="shrink mx-3 text-[11px] uppercase tracking-wider text-stone-400 font-semibold">
+            ou com e-mail e senha
+          </span>
+          <div className="flex-grow border-t border-stone-200" />
+        </div>
+
+        {/* Mode Switcher: Entrar vs Criar Conta */}
+        <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('login');
+              setAuthErrorMsg(null);
+            }}
+            className={`py-2 text-xs font-bold rounded-lg transition-colors ${
+              authMode === 'login' ? 'bg-white text-stone-900 shadow-2xs' : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            Entrar na Conta
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('register');
+              setAuthErrorMsg(null);
+            }}
+            className={`py-2 text-xs font-bold rounded-lg transition-colors ${
+              authMode === 'register' ? 'bg-white text-stone-900 shadow-2xs' : 'text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            {!hasPrimaryOwner ? 'Criar 1º Gestor' : 'Solicitar Cadastro'}
+          </button>
+        </div>
+
+        {authErrorMsg && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>{authErrorMsg}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+          {authMode === 'register' && (
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1">
+                Seu Nome Completo
+              </label>
+              <input
+                type="text"
+                required
+                value={authName}
+                onChange={(e) => setAuthName(e.target.value)}
+                placeholder="Ex: Rev. Paulo Silveira"
+                className="w-full min-h-[44px] px-3.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
+              />
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1">
               E-mail do Gestor
@@ -654,8 +921,8 @@ export const ManagerView: React.FC = () => {
                 required
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="gestor@igreja.com.br"
-                className="w-full min-h-[46px] pl-10 pr-3 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
+                placeholder="seuemail@igreja.com.br"
+                className="w-full min-h-[44px] pl-10 pr-3 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
               />
               <Mail className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             </div>
@@ -669,10 +936,11 @@ export const ManagerView: React.FC = () => {
               <input
                 type="password"
                 required
+                minLength={6}
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full min-h-[46px] pl-10 pr-3 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
+                placeholder="Mínimo 6 caracteres"
+                className="w-full min-h-[44px] pl-10 pr-3 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
               />
               <Key className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             </div>
@@ -680,31 +948,19 @@ export const ManagerView: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full min-h-[46px] rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2 shadow-xs"
+            disabled={authLoading}
+            className="w-full min-h-[46px] rounded-xl bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2 shadow-xs"
           >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Entrar no Painel</span>
+            <UserPlus className="w-4 h-4" />
+            <span>
+              {authMode === 'register'
+                ? !hasPrimaryOwner
+                  ? 'Cadastrar como 1º Gestor Principal'
+                  : 'Enviar Solicitação ao 1º Gestor'
+                : 'Entrar com E-mail e Senha'}
+            </span>
           </button>
         </form>
-
-        {/* Demo Fast Login Helper */}
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
-            <Shield className="w-4 h-4 text-amber-700" />
-            <span>Acesso de Demonstração (Testes):</span>
-          </div>
-          <p className="text-[11px] text-amber-800">
-            E-mail: <code className="font-mono font-bold">gestor@igreja.com.br</code> | Senha:{' '}
-            <code className="font-mono font-bold">admin123</code>
-          </p>
-          <button
-            type="button"
-            onClick={handleQuickDemoLogin}
-            className="w-full min-h-[38px] text-xs font-bold text-amber-900 bg-amber-200 hover:bg-amber-300 rounded-lg transition-colors py-1.5"
-          >
-            Preencher e Entrar Automaticamente
-          </button>
-        </div>
       </div>
     );
   }
@@ -719,28 +975,73 @@ export const ManagerView: React.FC = () => {
             <ShieldCheck className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight">
                 Painel de Gestão
               </h1>
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                Sessão Ativa
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">
+                {isPrimaryOwner ? '1º Gestor Principal' : 'Gestor Autorizado'}
               </span>
+              {isCloudSynced && (
+                <span className="text-[10px] bg-sky-100 text-sky-900 font-bold px-2.5 py-0.5 rounded-full">
+                  Banco em Nuvem Ativo
+                </span>
+              )}
             </div>
             <p className="text-xs text-stone-500">
-              Controle total de conteúdos, cultos, boletins, aniversariantes e banners.
+              {currentManagerAccount
+                ? `Conectado como ${currentManagerAccount.name} (${currentManagerAccount.email})`
+                : 'Controle total de conteúdos, cultos, boletins, aniversariantes e escalas.'}
             </p>
           </div>
         </div>
 
-        <button
-          onClick={managerLogout}
-          className="min-h-[42px] px-4 py-2 rounded-xl border border-stone-200 hover:bg-rose-50 hover:text-rose-600 text-stone-600 text-xs font-semibold flex items-center gap-1.5 self-start md:self-auto transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Sair da Gestão</span>
-        </button>
+        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={syncLocalDataToCloud}
+            className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
+            title="Forçar sincronização de todos os módulos com o banco na nuvem"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Sincronizar Nuvem</span>
+          </button>
+
+          <button
+            onClick={managerLogout}
+            className="min-h-[42px] px-4 py-2 rounded-xl border border-stone-200 hover:bg-rose-50 hover:text-rose-600 text-stone-600 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sair da Gestão</span>
+          </button>
+        </div>
       </div>
+
+      {/* Alert if there are pending manager requests waiting for Primary Owner approval */}
+      {isPrimaryOwner && pendingManagersCount > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 font-bold">
+              {pendingManagersCount}
+            </div>
+            <div>
+              <h4 className="text-xs sm:text-sm font-bold text-amber-950">
+                Solicitação de Novo Gestor Aguardando Sua Liberação
+              </h4>
+              <p className="text-xs text-amber-800">
+                Há {pendingManagersCount} pessoa(s) aguardando sua permissão para ajudar na gestão da igreja.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('team')}
+            className="min-h-[38px] px-4 py-2 rounded-xl bg-amber-900 hover:bg-amber-950 text-white text-xs font-bold shrink-0 self-start sm:self-auto"
+          >
+            Analisar Solicitações
+          </button>
+        </div>
+      )}
 
       {/* 2. Management Navigation Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
@@ -750,7 +1051,8 @@ export const ManagerView: React.FC = () => {
           { id: 'deacons', label: 'Escala de Diáconos', count: deaconSchedules.length, icon: <ClipboardList className="w-4 h-4" /> },
           { id: 'birthdays', label: 'Aniversariantes', count: birthdays.length, icon: <CalendarHeart className="w-4 h-4" /> },
           { id: 'banners', label: 'Banners', count: banners.length, icon: <ImageIcon className="w-4 h-4" /> },
-          { id: 'settings', label: 'Configurações & API', icon: <Settings className="w-4 h-4" /> }
+          { id: 'team', label: 'Gestores & Acessos', count: pendingManagersCount || allManagers.length, icon: <Users className="w-4 h-4" /> },
+          { id: 'settings', label: 'Configurações & Vercel', icon: <Settings className="w-4 h-4" /> }
         ].map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -1580,6 +1882,42 @@ export const ManagerView: React.FC = () => {
             </div>
           </form>
 
+          {/* Vercel & Cloud Database Guide */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-base text-stone-900">
+                  Publicação na Vercel &amp; Banco de Dados em Nuvem
+                </h4>
+                <p className="text-xs text-stone-500">
+                  O aplicativo já está preparado com <code>vercel.json</code> e conectado ao Firebase Firestore.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-stone-600">
+              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
+                <span className="font-bold text-stone-900 block">1. Subir na Vercel</span>
+                <p className="leading-relaxed">
+                  • Conecte este repositório na sua conta da <strong>Vercel</strong>.<br />
+                  • Comando de Build: <code className="font-mono bg-white px-1.5 py-0.5 rounded border">npm run build</code><br />
+                  • Diretório de Saída: <code className="font-mono bg-white px-1.5 py-0.5 rounded border">dist</code>
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
+                <span className="font-bold text-stone-900 block">2. Domínio Autorizado no Firebase</span>
+                <p className="leading-relaxed">
+                  • Após gerar seu link <code>.vercel.app</code>, adicione-o no Console do Firebase em{' '}
+                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> para habilitar o login do Gestor na Vercel.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Backup & Export Area */}
           <div className="bg-white rounded-3xl p-6 border border-stone-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -1595,6 +1933,141 @@ export const ManagerView: React.FC = () => {
               <Download className="w-4 h-4 text-[#344E41]" />
               <span>Exportar Backup (JSON)</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: GESTORES & CONTROLE DE ACESSO DA IGREJA (ANTI-DUPLICIDADE) */}
+      {activeTab === 'team' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
+              <div className="space-y-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-full inline-block">
+                  Proteção Contra Duplicidade de Igreja
+                </span>
+                <h3 className="font-bold text-stone-900 text-lg">
+                  Gestores &amp; Liberação de Acesso ({churchRegistry?.churchName || churchInfo.name})
+                </h3>
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  O <strong>1º Gestor Principal</strong> detém a titularidade da igreja. Outras pessoas que se cadastrarem como gestores ficam com status <strong>Pendente</strong> e só conseguem acessar o painel se o 1º Gestor liberar abaixo.
+                </p>
+              </div>
+            </div>
+
+            {/* Titular / 1º Gestor Card */}
+            <div className="p-4 rounded-2xl bg-[#EAF0EC]/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#344E41] text-white flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#344E41] block">
+                    1º Gestor Principal (Titular da Igreja)
+                  </span>
+                  <h4 className="font-bold text-sm text-stone-900">
+                    {churchRegistry?.ownerName || currentManagerAccount?.name || 'Gestor Principal'}
+                  </h4>
+                  <p className="text-xs text-stone-600 font-mono">
+                    {churchRegistry?.ownerEmail || currentManagerAccount?.email || settings.managerEmail}
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-emerald-900 bg-white px-3 py-1 rounded-full border border-emerald-200 self-start sm:self-auto">
+                Conta Matriz Verificada
+              </span>
+            </div>
+
+            {/* Lista de Todos os Gestores e Solicitações Pendentes */}
+            <div className="space-y-3">
+              <h4 className="font-bold text-xs uppercase tracking-wider text-stone-500">
+                Contas Vinculadas e Solicitações ({allManagers.length})
+              </h4>
+
+              {allManagers.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200 text-xs text-stone-500 text-center">
+                  Nenhuma outra solicitação de gestor registrada no momento.
+                </div>
+              ) : (
+                <div className="divide-y divide-stone-100 border border-stone-200 rounded-2xl overflow-hidden bg-white">
+                  {allManagers.map((mgr) => {
+                    const isOwnerRow = mgr.role === 'owner' || mgr.uid === churchRegistry?.ownerUid;
+                    return (
+                      <div
+                        key={mgr.uid}
+                        className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-stone-50/70"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-sm text-stone-900">{mgr.name}</span>
+                            {isOwnerRow ? (
+                              <span className="text-[10px] font-bold uppercase bg-[#344E41] text-white px-2 py-0.5 rounded-full">
+                                1º Gestor (Titular)
+                              </span>
+                            ) : mgr.status === 'approved' ? (
+                              <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                                Liberado pelo 1º Gestor
+                              </span>
+                            ) : mgr.status === 'pending' ? (
+                              <span className="text-[10px] font-bold uppercase bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full">
+                                Aguardando Liberação
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold uppercase bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full">
+                                Acesso Bloqueado
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-stone-500 font-mono">{mgr.email}</p>
+                        </div>
+
+                        {/* Actions only for Primary Owner on Co-Managers */}
+                        {!isOwnerRow && isPrimaryOwner && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {mgr.status !== 'approved' && (
+                              <button
+                                type="button"
+                                onClick={() => approveOrRevokeManager(mgr.uid, 'approved')}
+                                className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Liberar Acesso de Gestor</span>
+                              </button>
+                            )}
+
+                            {mgr.status === 'approved' && (
+                              <button
+                                type="button"
+                                onClick={() => approveOrRevokeManager(mgr.uid, 'revoked')}
+                                className="min-h-[36px] px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-semibold transition-colors"
+                              >
+                                Revogar Permissão
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                askConfirmation({
+                                  title: 'Remover Solicitação de Gestor?',
+                                  message: `Deseja excluir o cadastro de "${mgr.name}" (${mgr.email}) da lista de gestores da igreja?`,
+                                  isDestructive: true,
+                                  onConfirm: () => removePendingManager(mgr.uid)
+                                })
+                              }
+                              className="p-2 rounded-xl text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                              title="Excluir solicitação"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

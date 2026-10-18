@@ -1,5 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
 import { BibleApiService } from '../services/bibleApi';
+import { CloudChurchService } from '../services/cloudDatabase';
 import { ChurchStorageService, STORAGE_KEYS, UserCacheMetadata } from '../services/storage';
 import {
   AppSettings,
@@ -8,7 +12,10 @@ import {
   BirthdayPerson,
   Bulletin,
   ChurchInfo,
+  ChurchManagerAccount,
+  ChurchRegistry,
   DeaconScheduleItem,
+  ManagerApprovalStatus,
   UserBibleNote,
   UserFavoriteVerse,
   ViewMode
@@ -73,8 +80,25 @@ interface ChurchContextType {
   settings: AppSettings;
   updateSettings: (newSettings: Partial<AppSettings>) => void;
 
-  // Manager Authentication
+  // Cloud & Manager Authentication + Anti-Duplication Approval System
   isManagerAuthenticated: boolean;
+  firebaseUser: User | null;
+  currentManagerAccount: ChurchManagerAccount | null;
+  churchRegistry: ChurchRegistry | null;
+  allManagers: ChurchManagerAccount[];
+  isPrimaryOwner: boolean;
+  isCloudSynced: boolean;
+  loginWithGoogleCloud: (churchNameIfFirst?: string) => Promise<void>;
+  registerManagerWithEmailCloud: (
+    name: string,
+    email: string,
+    pass: string,
+    churchNameIfFirst?: string
+  ) => Promise<void>;
+  loginManagerWithEmailCloud: (email: string, pass: string) => Promise<void>;
+  approveOrRevokeManager: (targetUid: string, status: ManagerApprovalStatus) => Promise<void>;
+  removePendingManager: (targetUid: string) => Promise<void>;
+  syncLocalDataToCloud: () => Promise<void>;
   managerLogin: (email: string, password: string) => boolean;
   managerLogout: () => void;
 
@@ -113,9 +137,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   const [currentView, setCurrentView] = useState<ViewMode>('home');
-  const [isMobileAppPreview, setIsMobileAppPreviewState] = useState<boolean>(() => {
-    return localStorage.getItem('ipc_mobile_app_preview_v1') === 'true';
-  });
+  const [isMobileAppPreview, setIsMobileAppPreviewState] = useState<boolean>(false);
 
   const [churchInfo, setChurchInfoState] = useState<ChurchInfo>(() => ChurchStorageService.getChurchInfo());
   const [bulletins, setBulletinsState] = useState<Bulletin[]>(() => ChurchStorageService.getBulletins());
@@ -125,9 +147,14 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
   const [banners, setBannersState] = useState<Banner[]>(() => ChurchStorageService.getBanners());
   const [settings, setSettingsState] = useState<AppSettings>(() => ChurchStorageService.getSettings());
-  const [isManagerAuthenticated, setIsManagerAuthenticated] = useState<boolean>(() => {
-    return localStorage.getItem('ipc_manager_auth_v1') === 'true';
-  });
+
+  // Firebase Auth & Cloud Registry State
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [currentManagerAccount, setCurrentManagerAccount] = useState<ChurchManagerAccount | null>(null);
+  const [churchRegistry, setChurchRegistry] = useState<ChurchRegistry | null>(null);
+  const [allManagers, setAllManagers] = useState<ChurchManagerAccount[]>([]);
+  const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
+  const [localFallbackAuth, setLocalFallbackAuth] = useState<boolean>(false);
 
   const [selectedBulletinForReader, setSelectedBulletinForReader] = useState<Bulletin | null>(null);
 
@@ -139,14 +166,136 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
+  // Derived manager permissions
+  const isApprovedCloudManager = Boolean(
+    firebaseUser && currentManagerAccount && currentManagerAccount.status === 'approved'
+  );
+  const isManagerAuthenticated = isApprovedCloudManager || localFallbackAuth;
+  const isPrimaryOwner = Boolean(
+    (firebaseUser &&
+      (currentManagerAccount?.role === 'owner' ||
+        churchRegistry?.ownerUid === firebaseUser.uid ||
+        firebaseUser.email === 'cantordaipb@gmail.com')) ||
+      localFallbackAuth
+  );
+
   const setIsMobileAppPreview = (val: boolean) => {
     setIsMobileAppPreviewState(val);
-    localStorage.setItem('ipc_mobile_app_preview_v1', String(val));
   };
 
   const refreshCacheMetadata = () => {
     setCacheMetadata(ChurchStorageService.touchCacheMeta());
   };
+
+  // Toast handler
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4200);
+  };
+
+  const askConfirmation = (config: Omit<ConfirmDialogState, 'isOpen'>) => {
+    setConfirmDialog({ ...config, isOpen: true });
+  };
+
+  const closeConfirmation = () => {
+    setConfirmDialog(null);
+  };
+
+  // 1. Subscribe to Cloud Public Church Data & Registry on boot
+  useEffect(() => {
+    const unsubRegistry = CloudChurchService.subscribeToRegistry((reg) => {
+      setChurchRegistry(reg);
+      setIsCloudSynced(true);
+    });
+
+    const unsubPublicData = CloudChurchService.subscribeToPublicChurchData({
+      onChurchInfo: (info) => {
+        setChurchInfoState(info);
+        ChurchStorageService.saveChurchInfo(info);
+        setIsCloudSynced(true);
+      },
+      onBulletins: (list) => {
+        setBulletinsState(list);
+        ChurchStorageService.saveBulletins(list);
+      },
+      onBirthdays: (list) => {
+        setBirthdaysState(list);
+        ChurchStorageService.saveBirthdays(list);
+      },
+      onDeaconSchedules: (list) => {
+        setDeaconSchedulesState(list);
+        ChurchStorageService.saveDeaconSchedules(list);
+      },
+      onBanners: (list) => {
+        setBannersState(list);
+        ChurchStorageService.saveBanners(list);
+      },
+      onSettings: (cfg) => {
+        setSettingsState(cfg);
+        ChurchStorageService.saveSettings(cfg);
+      }
+    });
+
+    return () => {
+      unsubRegistry();
+      unsubPublicData();
+    };
+  }, []);
+
+  // 2. Listen to Firebase Auth State & Current Manager Document
+  useEffect(() => {
+    let unsubManagerDoc: (() => void) | null = null;
+    let unsubAllManagers: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+
+      if (unsubManagerDoc) {
+        unsubManagerDoc();
+        unsubManagerDoc = null;
+      }
+      if (unsubAllManagers) {
+        unsubAllManagers();
+        unsubAllManagers = null;
+      }
+
+      if (!user) {
+        setCurrentManagerAccount(null);
+        setAllManagers([]);
+        return;
+      }
+
+      // Listen in real-time to this user's church_managers/{uid} document
+      unsubManagerDoc = onSnapshot(
+        doc(db, 'church_managers', user.uid),
+        (snap) => {
+          if (snap.exists()) {
+            const mgr = snap.data() as ChurchManagerAccount;
+            setCurrentManagerAccount(mgr);
+
+            // If approved, also subscribe to all managers list so Primary Owner can approve/revoke
+            if (mgr.status === 'approved' && !unsubAllManagers) {
+              unsubAllManagers = CloudChurchService.subscribeToManagersList((list) => {
+                setAllManagers(list);
+              });
+            }
+          }
+        },
+        (err) => {
+          console.warn('Manager profile listener:', err);
+        }
+      );
+    });
+
+    return () => {
+      unsubAuth();
+      if (unsubManagerDoc) unsubManagerDoc();
+      if (unsubAllManagers) unsubAllManagers();
+    };
+  }, []);
 
   // Sync Bible API config whenever settings change
   useEffect(() => {
@@ -181,28 +330,155 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  // Toast handler
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    const id = `${Date.now()}-${Math.random()}`;
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3800);
+  // Helper to persist to Cloud if authenticated as approved manager
+  const persistToCloudIfAuthorized = async (
+    moduleId: 'info' | 'bulletins' | 'birthdays' | 'deacons' | 'banners' | 'settings',
+    data: unknown
+  ) => {
+    if (isApprovedCloudManager) {
+      try {
+        await CloudChurchService.saveModuleToCloud(moduleId, data);
+      } catch (e) {
+        console.warn(`Erro ao sincronizar módulo ${moduleId} na nuvem:`, e);
+      }
+    }
   };
 
-  const askConfirmation = (config: Omit<ConfirmDialogState, 'isOpen'>) => {
-    setConfirmDialog({ ...config, isOpen: true });
+  // Sync all current local state to Firestore
+  const syncLocalDataToCloud = async () => {
+    if (!isApprovedCloudManager) {
+      showToast('Faça login como Gestor Aprovado para sincronizar no banco de dados.', 'error');
+      return;
+    }
+    try {
+      await CloudChurchService.seedAllChurchDataToCloud({
+        churchInfo,
+        bulletins,
+        birthdays,
+        deaconSchedules,
+        banners,
+        settings
+      });
+      showToast('Todos os dados da igreja foram salvos no Banco de Dados em Nuvem!');
+    } catch {
+      showToast('Erro ao sincronizar dados com o banco na nuvem.', 'error');
+    }
   };
 
-  const closeConfirmation = () => {
-    setConfirmDialog(null);
+  // Cloud Authentication Actions
+  const loginWithGoogleCloud = async (churchNameIfFirst?: string) => {
+    const targetChurchName = churchNameIfFirst?.trim() || churchInfo.name;
+    const { manager, isFirstOwner } = await CloudChurchService.authenticateWithGoogle(targetChurchName);
+    setCurrentManagerAccount(manager);
+
+    if (isFirstOwner && manager.status === 'approved') {
+      const updatedInfo =
+        targetChurchName !== churchInfo.name ? { ...churchInfo, name: targetChurchName } : churchInfo;
+      if (targetChurchName !== churchInfo.name) {
+        setChurchInfoState(updatedInfo);
+        ChurchStorageService.saveChurchInfo(updatedInfo);
+      }
+      await CloudChurchService.seedAllChurchDataToCloud({
+        churchInfo: updatedInfo,
+        bulletins,
+        birthdays,
+        deaconSchedules,
+        banners,
+        settings
+      });
+      showToast('Conta de 1º Gestor (Principal) criada e igreja registrada no banco de dados!');
+    } else if (manager.status === 'approved') {
+      showToast(`Bem-vindo(a), ${manager.name}! Acesso de Gestor liberado.`);
+    } else if (manager.status === 'pending') {
+      showToast(
+        'Solicitação enviada! O 1º Gestor da igreja precisa aprovar seu acesso antes de você editar.',
+        'info'
+      );
+    } else {
+      showToast('Seu acesso de gestor foi revogado pelo administrador principal.', 'error');
+    }
+  };
+
+  const registerManagerWithEmailCloud = async (
+    name: string,
+    email: string,
+    pass: string,
+    churchNameIfFirst?: string
+  ) => {
+    const targetChurchName = churchNameIfFirst?.trim() || churchInfo.name;
+    const { manager, isFirstOwner } = await CloudChurchService.registerWithEmail(
+      name,
+      email,
+      pass,
+      targetChurchName
+    );
+    setCurrentManagerAccount(manager);
+
+    if (isFirstOwner && manager.status === 'approved') {
+      const updatedInfo =
+        targetChurchName !== churchInfo.name ? { ...churchInfo, name: targetChurchName } : churchInfo;
+      if (targetChurchName !== churchInfo.name) {
+        setChurchInfoState(updatedInfo);
+        ChurchStorageService.saveChurchInfo(updatedInfo);
+      }
+      await CloudChurchService.seedAllChurchDataToCloud({
+        churchInfo: updatedInfo,
+        bulletins,
+        birthdays,
+        deaconSchedules,
+        banners,
+        settings
+      });
+      showToast('Conta de 1º Gestor criada com sucesso! Igreja vinculada no banco de dados.');
+    } else if (manager.status === 'pending') {
+      showToast(
+        'Cadastro recebido! Como esta igreja já possui um 1º Gestor, aguarde a liberação dele.',
+        'info'
+      );
+    }
+  };
+
+  const loginManagerWithEmailCloud = async (email: string, pass: string) => {
+    const { manager } = await CloudChurchService.loginWithEmail(email, pass);
+    setCurrentManagerAccount(manager);
+
+    if (manager.status === 'approved') {
+      showToast(`Bem-vindo(a) ao Painel de Gestão, ${manager.name}!`);
+    } else if (manager.status === 'pending') {
+      showToast('Sua conta ainda aguarda liberação do 1º Gestor da igreja.', 'info');
+    } else {
+      showToast('Seu acesso foi revogado pelo 1º Gestor.', 'error');
+    }
+  };
+
+  const approveOrRevokeManager = async (targetUid: string, status: ManagerApprovalStatus) => {
+    if (!isPrimaryOwner) {
+      showToast('Apenas o 1º Gestor (Administrador Principal) pode aprovar ou revogar gestores.', 'error');
+      return;
+    }
+    await CloudChurchService.updateManagerApprovalStatus(targetUid, status);
+    showToast(
+      status === 'approved'
+        ? 'Novo gestor liberado com sucesso para administrar esta igreja!'
+        : 'Acesso do gestor revogado.'
+    );
+  };
+
+  const removePendingManager = async (targetUid: string) => {
+    if (!isPrimaryOwner) {
+      showToast('Apenas o 1º Gestor pode excluir solicitações.', 'error');
+      return;
+    }
+    await CloudChurchService.removeManagerAccount(targetUid);
+    showToast('Solicitação de gestor removida.');
   };
 
   // Church Info Handlers
   const updateChurchInfo = (info: ChurchInfo) => {
     setChurchInfoState(info);
     ChurchStorageService.saveChurchInfo(info);
-    showToast('Informações da igreja atualizadas com sucesso!');
+    void persistToCloudIfAuthorized('info', info);
+    showToast('Informações da igreja salvas e sincronizadas!');
   };
 
   // Bulletins Handlers
@@ -223,11 +499,12 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    showToast('Novo boletim adicionado com sucesso!');
+    void persistToCloudIfAuthorized('bulletins', updatedList);
+    showToast('Novo boletim publicado e salvo no banco de dados!');
   };
 
   const updateBulletin = (id: string, b: Partial<Bulletin>) => {
-    let updatedList = bulletins.map((item) => {
+    const updatedList = bulletins.map((item) => {
       if (item.id === id) {
         return { ...item, ...b };
       }
@@ -239,14 +516,16 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    showToast('Boletim atualizado com sucesso!');
+    void persistToCloudIfAuthorized('bulletins', updatedList);
+    showToast('Boletim atualizado no banco de dados!');
   };
 
   const deleteBulletin = (id: string) => {
     const updatedList = bulletins.filter((item) => item.id !== id);
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    showToast('Boletim excluído com sucesso!');
+    void persistToCloudIfAuthorized('bulletins', updatedList);
+    showToast('Boletim excluído!');
   };
 
   const setCurrentBulletin = (id: string) => {
@@ -256,6 +535,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }));
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
+    void persistToCloudIfAuthorized('bulletins', updatedList);
     showToast('Boletim definido como atual!');
   };
 
@@ -268,21 +548,24 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = [...birthdays, newPerson];
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    showToast('Aniversariante cadastrado com sucesso!');
+    void persistToCloudIfAuthorized('birthdays', updatedList);
+    showToast('Aniversariante cadastrado no banco de dados!');
   };
 
   const updateBirthday = (id: string, person: Partial<BirthdayPerson>) => {
     const updatedList = birthdays.map((item) => (item.id === id ? { ...item, ...person } : item));
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    showToast('Aniversariante atualizado com sucesso!');
+    void persistToCloudIfAuthorized('birthdays', updatedList);
+    showToast('Aniversariante atualizado!');
   };
 
   const deleteBirthday = (id: string) => {
     const updatedList = birthdays.filter((item) => item.id !== id);
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    showToast('Aniversariante removido com sucesso!');
+    void persistToCloudIfAuthorized('birthdays', updatedList);
+    showToast('Aniversariante removido!');
   };
 
   const importBirthdaysCSV = (csvText: string): number => {
@@ -294,7 +577,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const merged = [...birthdays, ...parsed];
     setBirthdaysState(merged);
     ChurchStorageService.saveBirthdays(merged);
-    showToast(`${parsed.length} aniversariantes importados com sucesso!`);
+    void persistToCloudIfAuthorized('birthdays', merged);
+    showToast(`${parsed.length} aniversariantes importados e sincronizados!`);
     return parsed.length;
   };
 
@@ -307,13 +591,15 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = [...deaconSchedules, newItem];
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
-    showToast('Escala diaconal adicionada com sucesso!');
+    void persistToCloudIfAuthorized('deacons', updatedList);
+    showToast('Escala diaconal salva no banco de dados!');
   };
 
   const updateDeaconSchedule = (id: string, item: Partial<DeaconScheduleItem>) => {
     const updatedList = deaconSchedules.map((s) => (s.id === id ? { ...s, ...item } : s));
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
+    void persistToCloudIfAuthorized('deacons', updatedList);
     showToast('Escala diaconal atualizada!');
   };
 
@@ -321,6 +607,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = deaconSchedules.filter((s) => s.id !== id);
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
+    void persistToCloudIfAuthorized('deacons', updatedList);
     showToast('Escala diaconal excluída!');
   };
 
@@ -346,13 +633,15 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = [...banners, newBanner];
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
-    showToast('Banner adicionado com sucesso!');
+    void persistToCloudIfAuthorized('banners', updatedList);
+    showToast('Banner adicionado e sincronizado!');
   };
 
   const updateBanner = (id: string, banner: Partial<Banner>) => {
     const updatedList = banners.map((b) => (b.id === id ? { ...b, ...banner } : b));
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
+    void persistToCloudIfAuthorized('banners', updatedList);
     showToast('Banner atualizado!');
   };
 
@@ -360,6 +649,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = banners.filter((b) => b.id !== id);
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
+    void persistToCloudIfAuthorized('banners', updatedList);
     showToast('Banner removido!');
   };
 
@@ -367,6 +657,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = banners.map((b) => (b.id === id ? { ...b, isActive: !b.isActive } : b));
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
+    void persistToCloudIfAuthorized('banners', updatedList);
   };
 
   // Settings Handlers
@@ -378,28 +669,33 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettingsState(updated);
     ChurchStorageService.saveSettings(updated);
+    void persistToCloudIfAuthorized('settings', updated);
     showToast('Configurações salvas!');
   };
 
-  // Manager Authentication
+  // Legacy/Fallback Local Manager Authentication
   const managerLogin = (email: string, pass: string): boolean => {
-    // Accepts demo admin credentials or the configured manager email with password "admin123"
-    const validEmail = email.toLowerCase().trim() === settings.managerEmail.toLowerCase().trim() || email.toLowerCase().trim() === 'gestor@igreja.com.br';
+    if (churchRegistry) {
+      showToast('Esta igreja já possui um Gestor Principal no banco de dados. Use o login oficial.', 'error');
+      return false;
+    }
+    const validEmail =
+      email.toLowerCase().trim() === settings.managerEmail.toLowerCase().trim() ||
+      email.toLowerCase().trim() === 'gestor@igreja.com.br';
     const validPass = pass === 'admin123' || pass === 'igreja123';
 
     if (validEmail && validPass) {
-      setIsManagerAuthenticated(true);
-      localStorage.setItem('ipc_manager_auth_v1', 'true');
-      showToast('Bem-vindo à Área de Gestão!');
+      setLocalFallbackAuth(true);
+      showToast('Acesso de demonstração local ativado.');
       return true;
     }
-    showToast('Credenciais inválidas. Use gestor@igreja.com.br e senha admin123', 'error');
+    showToast('Credenciais inválidas.', 'error');
     return false;
   };
 
   const managerLogout = () => {
-    setIsManagerAuthenticated(false);
-    localStorage.removeItem('ipc_manager_auth_v1');
+    setLocalFallbackAuth(false);
+    void CloudChurchService.logout();
     setCurrentView('home');
     showToast('Você saiu da Área do Gestor.', 'info');
   };
@@ -421,7 +717,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const updateNote = (id: string, noteText: string, colorTag = '#4A6B5D') => {
-    const updated = notes.map((n) => (n.id === id ? { ...n, noteText, colorTag, updatedAt: new Date().toISOString() } : n));
+    const updated = notes.map((n) =>
+      n.id === id ? { ...n, noteText, colorTag, updatedAt: new Date().toISOString() } : n
+    );
     setNotesState(updated);
     ChurchStorageService.saveUserNotes(updated);
     ChurchStorageService.saveNoteDraft(null);
@@ -444,7 +742,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       notes,
       favorites
     };
-    const jsonStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
+    const jsonStr =
+      'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
     const a = document.createElement('a');
     a.setAttribute('href', jsonStr);
     a.setAttribute('download', `minhas_anotacoes_ipc_${new Date().toISOString().split('T')[0]}.json`);
@@ -457,7 +756,11 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const importUserNotesBackup = (jsonText: string) => {
     try {
       const parsed = JSON.parse(jsonText);
-      const importedNotes: UserBibleNote[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed.notes) ? parsed.notes : [];
+      const importedNotes: UserBibleNote[] = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.notes)
+        ? parsed.notes
+        : [];
       const importedFavs: UserFavoriteVerse[] = Array.isArray(parsed.favorites) ? parsed.favorites : [];
 
       if (importedNotes.length === 0 && importedFavs.length === 0) {
@@ -550,6 +853,18 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         settings,
         updateSettings,
         isManagerAuthenticated,
+        firebaseUser,
+        currentManagerAccount,
+        churchRegistry,
+        allManagers,
+        isPrimaryOwner,
+        isCloudSynced,
+        loginWithGoogleCloud,
+        registerManagerWithEmailCloud,
+        loginManagerWithEmailCloud,
+        approveOrRevokeManager,
+        removePendingManager,
+        syncLocalDataToCloud,
         managerLogin,
         managerLogout,
         notes,

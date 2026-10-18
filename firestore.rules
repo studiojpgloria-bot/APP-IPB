@@ -1,0 +1,214 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'cantordaipb@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function churchRegistryExists() {
+      return exists(/databases/$(database)/documents/church_config/registry);
+    }
+
+    function isChurchPrimaryOwner() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (churchRegistryExists() &&
+          get(/databases/$(database)/documents/church_config/registry).data.ownerUid == request.auth.uid)
+      );
+    }
+
+    function isApprovedManager() {
+      return isSignedIn() && (
+        isChurchPrimaryOwner() ||
+        (exists(/databases/$(database)/documents/church_managers/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/church_managers/$(request.auth.uid)).data.status == 'approved')
+      );
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidChurchRegistry(data) {
+      return data.keys().hasAll(['ownerUid', 'ownerEmail', 'ownerName', 'churchName', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['ownerUid', 'ownerEmail', 'ownerName', 'churchName', 'createdAt', 'updatedAt']) &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        data.ownerEmail is string && data.ownerEmail.size() >= 3 && data.ownerEmail.size() <= 200 &&
+        data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 150 &&
+        data.churchName is string && data.churchName.size() >= 1 && data.churchName.size() <= 200 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidChurchManager(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'status', 'requestedAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'name', 'role', 'status', 'requestedAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
+        data.role is string && data.role.size() <= 32 && data.role in ['owner', 'co_manager'] &&
+        data.status is string && data.status.size() <= 32 && data.status in ['approved', 'pending', 'revoked'] &&
+        data.requestedAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidChurchPublicData(data) {
+      return data.keys().hasAll(['docType', 'payload', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['docType', 'payload', 'updatedByUid', 'updatedAt']) &&
+        data.docType is string && data.docType.size() <= 32 &&
+        data.docType in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'] &&
+        data.payload is map &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    // 2. Singleton Church Registry (/church_config/registry)
+    // Locks the First Manager of the church so no duplicate church account can be created.
+    match /church_config/{configId} {
+      // Anyone can check if the church already has a primary manager registered
+      allow get: if isValidId(configId) && configId == 'registry';
+
+      // Create ONLY if registry does not exist yet (First Manager registration)
+      allow create: if isSignedIn() &&
+        isValidId(configId) &&
+        configId == 'registry' &&
+        isValidChurchRegistry(incoming()) &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        !churchRegistryExists();
+
+      // Update ONLY by the primary owner (ownerUid and createdAt are immortal/immutable)
+      allow update: if isSignedIn() &&
+        isValidId(configId) &&
+        configId == 'registry' &&
+        isValidChurchRegistry(incoming()) &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['churchName', 'ownerName', 'updatedAt']) &&
+        isChurchPrimaryOwner();
+
+      allow delete: if false;
+    }
+
+    // 3. Church Managers Collection (/church_managers/{managerUid})
+    // First manager is 'owner' + 'approved'. Subsequent managers are 'co_manager' + 'pending' until the First Manager approves them.
+    match /church_managers/{managerUid} {
+      // A user can read their own manager status, or an approved manager can view the team
+      allow get: if isSignedIn() &&
+        isValidId(managerUid) &&
+        (request.auth.uid == managerUid || isApprovedManager());
+
+      // Approved managers / primary owner can list managers to approve or revoke access
+      allow list: if isSignedIn() &&
+        (resource.data.uid == request.auth.uid || isApprovedManager());
+
+      // Registration:
+      // Branch A: First Manager registers when church_config/registry is being created or owned by them -> role: 'owner', status: 'approved'
+      // Branch B: Second+ person registers -> MUST be role: 'co_manager' and status: 'pending' (requires First Manager approval)
+      allow create: if isSignedIn() &&
+        isValidId(managerUid) &&
+        managerUid == request.auth.uid &&
+        isValidChurchManager(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().requestedAt == request.time &&
+        incoming().updatedAt == request.time && (
+          // Branch A: Primary First Manager
+          (
+            incoming().role == 'owner' &&
+            incoming().status == 'approved' &&
+            (
+              isBootstrappedAdmin() ||
+              !churchRegistryExists() ||
+              getAfter(/databases/$(database)/documents/church_config/registry).data.ownerUid == request.auth.uid
+            )
+          ) ||
+          // Branch B: Subsequent Manager requesting authorization from First Manager
+          (
+            incoming().role == 'co_manager' &&
+            incoming().status == 'pending' &&
+            churchRegistryExists()
+          )
+        );
+
+      // Update: Only Primary Owner (1st Manager) or Bootstrapped Admin can approve/revoke a manager
+      allow update: if isSignedIn() &&
+        isValidId(managerUid) &&
+        isValidChurchManager(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().requestedAt == existing().requestedAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Primary Owner approves or revokes co-manager
+          (
+            isChurchPrimaryOwner() &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'name', 'updatedAt'])
+          ) ||
+          // Action 2: Manager updates their own display name
+          (
+            request.auth.uid == managerUid &&
+            incoming().status == existing().status &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isSignedIn() &&
+        isValidId(managerUid) &&
+        isChurchPrimaryOwner() &&
+        managerUid != request.auth.uid;
+    }
+
+    // 4. Public Church Content (/church_data/{moduleId})
+    // Readable by all church members (USUÁRIO profile without login), writable ONLY by Approved Managers (GESTOR profile).
+    match /church_data/{moduleId} {
+      allow get: if isValidId(moduleId) &&
+        moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'];
+
+      allow list: if resource.data.docType in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'];
+
+      allow create: if isSignedIn() &&
+        isValidId(moduleId) &&
+        moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'] &&
+        isValidChurchPublicData(incoming()) &&
+        incoming().docType == moduleId &&
+        incoming().updatedAt == request.time &&
+        isApprovedManager();
+
+      allow update: if isSignedIn() &&
+        isValidId(moduleId) &&
+        moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'] &&
+        isValidChurchPublicData(incoming()) &&
+        incoming().docType == existing().docType &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['payload', 'updatedByUid', 'updatedAt']) &&
+        isApprovedManager();
+
+      allow delete: if false;
+    }
+  }
+}
