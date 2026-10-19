@@ -70,6 +70,7 @@ export const ManagerView: React.FC = () => {
     approveOrRevokeManager,
     removePendingManager,
     syncLocalDataToCloud,
+    pullLatestFromCloud,
     importFullChurchBackup,
     managerLogin,
     managerLogout,
@@ -1002,7 +1003,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         </form>
 
         {/* Helper for users who deployed to Vercel BEFORE creating the Firebase Database */}
-        <div className="pt-3 border-t border-stone-200/80 space-y-3">
+        <div className="pt-3 border-t border-stone-200/80 space-y-2.5">
+          <button
+            type="button"
+            onClick={pullLatestFromCloud}
+            className="w-full py-2.5 px-3 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] border border-emerald-200 text-xs font-bold text-[#344E41] flex items-center justify-center gap-2 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+            <span>Puxar Dados Atualizados do Banco Firebase Agora</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowVercelGuideOnLogin((prev) => !prev)}
@@ -1099,12 +1109,22 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
           <button
             type="button"
+            onClick={pullLatestFromCloud}
+            className="min-h-[42px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
+            title="Buscar as informações mais recentes gravadas no banco Firebase"
+          >
+            <Download className="w-3.5 h-3.5 text-[#344E41]" />
+            <span>Puxar do Banco</span>
+          </button>
+
+          <button
+            type="button"
             onClick={syncLocalDataToCloud}
             className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
-            title="Forçar sincronização de todos os módulos com o banco na nuvem"
+            title="Forçar envio de todos os dados desta tela para o banco na nuvem"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Sincronizar Nuvem</span>
+            <span>Enviar p/ Nuvem</span>
           </button>
 
           <button

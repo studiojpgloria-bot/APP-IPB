@@ -299,21 +299,12 @@ export class CloudChurchService {
     const sanitizedData = JSON.parse(JSON.stringify(data));
 
     try {
-      const existing = await getDoc(docRef);
-      if (existing.exists()) {
-        await updateDoc(docRef, {
-          payload: { items: sanitizedData },
-          updatedByUid: currentUser.uid,
-          updatedAt: serverTimestamp()
-        });
-      } else {
-        await setDoc(docRef, {
-          docType: moduleId,
-          payload: { items: sanitizedData },
-          updatedByUid: currentUser.uid,
-          updatedAt: serverTimestamp()
-        });
-      }
+      await setDoc(docRef, {
+        docType: moduleId,
+        payload: { items: sanitizedData },
+        updatedByUid: currentUser.uid,
+        updatedAt: serverTimestamp()
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, path);
     }
@@ -388,6 +379,57 @@ export class CloudChurchService {
         console.warn('Public church data listener notice:', error);
       }
     );
+  }
+
+  /**
+   * Explicitly fetches all 6 public church modules directly from Firestore server/cache.
+   */
+  public static async fetchAllPublicChurchDataFromCloud(callbacks: {
+    onChurchInfo: (info: ChurchInfo) => void;
+    onBulletins: (bulletins: Bulletin[]) => void;
+    onBirthdays: (birthdays: BirthdayPerson[]) => void;
+    onDeaconSchedules: (schedules: DeaconScheduleItem[]) => void;
+    onBanners: (banners: Banner[]) => void;
+    onSettings: (settings: AppSettings) => void;
+  }): Promise<number> {
+    const modules: CloudModuleType[] = ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'];
+    let loadedCount = 0;
+
+    await Promise.all(
+      modules.map(async (mod) => {
+        try {
+          const snap = await getDoc(doc(db, 'church_data', mod));
+          if (!snap.exists()) return;
+          const items = snap.data()?.payload?.items;
+          if (!items) return;
+          loadedCount++;
+          switch (mod) {
+            case 'info':
+              callbacks.onChurchInfo(items as ChurchInfo);
+              break;
+            case 'bulletins':
+              if (Array.isArray(items)) callbacks.onBulletins(items as Bulletin[]);
+              break;
+            case 'birthdays':
+              if (Array.isArray(items)) callbacks.onBirthdays(items as BirthdayPerson[]);
+              break;
+            case 'deacons':
+              if (Array.isArray(items)) callbacks.onDeaconSchedules(items as DeaconScheduleItem[]);
+              break;
+            case 'banners':
+              if (Array.isArray(items)) callbacks.onBanners(items as Banner[]);
+              break;
+            case 'settings':
+              callbacks.onSettings(items as AppSettings);
+              break;
+          }
+        } catch (err) {
+          console.warn(`Error fetching module ${mod}:`, err);
+        }
+      })
+    );
+
+    return loadedCount;
   }
 
   public static async logout(): Promise<void> {

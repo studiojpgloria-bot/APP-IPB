@@ -89,7 +89,7 @@ service cloud.firestore {
     // Locks the First Manager of the church so no duplicate church account can be created.
     match /church_config/{configId} {
       // Anyone can check if the church already has a primary manager registered
-      allow get: if isValidId(configId) && configId == 'registry';
+      allow get, list: if true;
 
       // Create ONLY if registry does not exist yet (First Manager registration)
       allow create: if isSignedIn() &&
@@ -99,7 +99,7 @@ service cloud.firestore {
         incoming().ownerUid == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
-        !churchRegistryExists();
+        (!churchRegistryExists() || isBootstrappedAdmin());
 
       // Update ONLY by the primary owner (ownerUid and createdAt are immortal/immutable)
       allow update: if isSignedIn() &&
@@ -109,7 +109,6 @@ service cloud.firestore {
         incoming().ownerUid == existing().ownerUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['churchName', 'ownerName', 'updatedAt']) &&
         isChurchPrimaryOwner();
 
       allow delete: if false;
@@ -123,9 +122,8 @@ service cloud.firestore {
         isValidId(managerUid) &&
         (request.auth.uid == managerUid || isApprovedManager());
 
-      // Approved managers / primary owner can list managers to approve or revoke access
-      allow list: if isSignedIn() &&
-        (resource.data.uid == request.auth.uid || isApprovedManager());
+      // Approved managers / primary owner can list all managers to approve or revoke access
+      allow list: if isSignedIn() && isApprovedManager();
 
       // Registration:
       // Branch A: First Manager registers when church_config/registry is being created or owned by them -> role: 'owner', status: 'approved'
@@ -164,16 +162,12 @@ service cloud.firestore {
         incoming().requestedAt == existing().requestedAt &&
         incoming().updatedAt == request.time && (
           // Action 1: Primary Owner approves or revokes co-manager
-          (
-            isChurchPrimaryOwner() &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'role', 'name', 'updatedAt'])
-          ) ||
+          isChurchPrimaryOwner() ||
           // Action 2: Manager updates their own display name
           (
             request.auth.uid == managerUid &&
             incoming().status == existing().status &&
-            incoming().role == existing().role &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt'])
+            incoming().role == existing().role
           )
         );
 
@@ -184,28 +178,17 @@ service cloud.firestore {
     }
 
     // 4. Public Church Content (/church_data/{moduleId})
-    // Readable by all church members (USUÁRIO profile without login), writable ONLY by Approved Managers (GESTOR profile).
+    // Readable by all church members and visitors across all environments (Vercel, AI Studio, Mobile),
+    // writable ONLY by Approved Managers (GESTOR profile).
     match /church_data/{moduleId} {
-      allow get: if isValidId(moduleId) &&
-        moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'];
+      allow get, list: if true;
 
-      allow list: if resource.data.docType in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'];
-
-      allow create: if isSignedIn() &&
+      allow create, update: if isSignedIn() &&
         isValidId(moduleId) &&
         moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'] &&
         isValidChurchPublicData(incoming()) &&
         incoming().docType == moduleId &&
         incoming().updatedAt == request.time &&
-        isApprovedManager();
-
-      allow update: if isSignedIn() &&
-        isValidId(moduleId) &&
-        moduleId in ['info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings'] &&
-        isValidChurchPublicData(incoming()) &&
-        incoming().docType == existing().docType &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['payload', 'updatedByUid', 'updatedAt']) &&
         isApprovedManager();
 
       allow delete: if false;

@@ -99,6 +99,7 @@ interface ChurchContextType {
   approveOrRevokeManager: (targetUid: string, status: ManagerApprovalStatus) => Promise<void>;
   removePendingManager: (targetUid: string) => Promise<void>;
   syncLocalDataToCloud: () => Promise<void>;
+  pullLatestFromCloud: () => Promise<void>;
   importFullChurchBackup: (jsonText: string) => Promise<void>;
   managerLogin: (email: string, password: string) => boolean;
   managerLogout: () => void;
@@ -205,40 +206,49 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setConfirmDialog(null);
   };
 
-  // 1. Subscribe to Cloud Public Church Data & Registry on boot
+  const cloudHandlers = {
+    onChurchInfo: (info: ChurchInfo) => {
+      setChurchInfoState(info);
+      ChurchStorageService.saveChurchInfo(info);
+      setIsCloudSynced(true);
+    },
+    onBulletins: (list: Bulletin[]) => {
+      setBulletinsState(list);
+      ChurchStorageService.saveBulletins(list);
+      setIsCloudSynced(true);
+    },
+    onBirthdays: (list: BirthdayPerson[]) => {
+      setBirthdaysState(list);
+      ChurchStorageService.saveBirthdays(list);
+      setIsCloudSynced(true);
+    },
+    onDeaconSchedules: (list: DeaconScheduleItem[]) => {
+      setDeaconSchedulesState(list);
+      ChurchStorageService.saveDeaconSchedules(list);
+      setIsCloudSynced(true);
+    },
+    onBanners: (list: Banner[]) => {
+      setBannersState(list);
+      ChurchStorageService.saveBanners(list);
+      setIsCloudSynced(true);
+    },
+    onSettings: (cfg: AppSettings) => {
+      setSettingsState(cfg);
+      ChurchStorageService.saveSettings(cfg);
+      setIsCloudSynced(true);
+    }
+  };
+
+  // 1. Subscribe to Cloud Public Church Data & Registry on boot + immediate fetch
   useEffect(() => {
+    void CloudChurchService.fetchAllPublicChurchDataFromCloud(cloudHandlers);
+
     const unsubRegistry = CloudChurchService.subscribeToRegistry((reg) => {
       setChurchRegistry(reg);
       setIsCloudSynced(true);
     });
 
-    const unsubPublicData = CloudChurchService.subscribeToPublicChurchData({
-      onChurchInfo: (info) => {
-        setChurchInfoState(info);
-        ChurchStorageService.saveChurchInfo(info);
-        setIsCloudSynced(true);
-      },
-      onBulletins: (list) => {
-        setBulletinsState(list);
-        ChurchStorageService.saveBulletins(list);
-      },
-      onBirthdays: (list) => {
-        setBirthdaysState(list);
-        ChurchStorageService.saveBirthdays(list);
-      },
-      onDeaconSchedules: (list) => {
-        setDeaconSchedulesState(list);
-        ChurchStorageService.saveDeaconSchedules(list);
-      },
-      onBanners: (list) => {
-        setBannersState(list);
-        ChurchStorageService.saveBanners(list);
-      },
-      onSettings: (cfg) => {
-        setSettingsState(cfg);
-        ChurchStorageService.saveSettings(cfg);
-      }
-    });
+    const unsubPublicData = CloudChurchService.subscribeToPublicChurchData(cloudHandlers);
 
     return () => {
       unsubRegistry();
@@ -336,19 +346,39 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     moduleId: 'info' | 'bulletins' | 'birthdays' | 'deacons' | 'banners' | 'settings',
     data: unknown
   ) => {
-    if (isApprovedCloudManager) {
+    if (auth.currentUser) {
       try {
         await CloudChurchService.saveModuleToCloud(moduleId, data);
+        setIsCloudSynced(true);
       } catch (e) {
         console.warn(`Erro ao sincronizar módulo ${moduleId} na nuvem:`, e);
       }
     }
   };
 
+  // Pull latest data directly from Firestore into current app state
+  const pullLatestFromCloud = async () => {
+    try {
+      const count = await CloudChurchService.fetchAllPublicChurchDataFromCloud(cloudHandlers);
+      const reg = await CloudChurchService.getChurchRegistry();
+      if (reg) setChurchRegistry(reg);
+      if (count > 0) {
+        showToast('Dados atualizados com sucesso a partir do banco de dados Firebase!');
+      } else {
+        showToast(
+          'O banco no Firebase ainda não recebeu dados. Na Vercel, clique em "Sincronizar Dados Atuais para o Firebase"!',
+          'info'
+        );
+      }
+    } catch {
+      showToast('Erro ao buscar dados no Firebase.', 'error');
+    }
+  };
+
   // Sync all current local state to Firestore
   const syncLocalDataToCloud = async () => {
-    if (!isApprovedCloudManager) {
-      showToast('Faça login como Gestor Aprovado para sincronizar no banco de dados.', 'error');
+    if (!auth.currentUser) {
+      showToast('Faça login como Gestor para sincronizar no banco de dados.', 'error');
       return;
     }
     try {
@@ -360,6 +390,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         banners,
         settings
       });
+      setIsCloudSynced(true);
       showToast('Todos os dados da igreja foram salvos no Banco de Dados em Nuvem!');
     } catch {
       showToast('Erro ao sincronizar dados com o banco na nuvem.', 'error');
@@ -911,6 +942,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         approveOrRevokeManager,
         removePendingManager,
         syncLocalDataToCloud,
+        pullLatestFromCloud,
         importFullChurchBackup,
         managerLogin,
         managerLogout,
