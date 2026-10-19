@@ -37,6 +37,7 @@ import {
   Users,
   X
 } from 'lucide-react';
+import { activeFirebaseConfig } from '../../config/firebase';
 import { useChurch } from '../../context/ChurchContext';
 import { ChurchStorageService } from '../../services/storage';
 import {
@@ -110,6 +111,8 @@ export const ManagerView: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authErrorMsg, setAuthErrorMsg] = useState<string | null>(null);
+  const [showVercelGuideOnLogin, setShowVercelGuideOnLogin] = useState(false);
+  const [copiedEnvVars, setCopiedEnvVars] = useState(false);
 
   // --- Church Info Form State ---
   const [infoForm, setInfoForm] = useState<ChurchInfo>(churchInfo);
@@ -688,6 +691,21 @@ export const ManagerView: React.FC = () => {
     showToast('Backup exportado com sucesso!');
   };
 
+  const vercelEnvBlock = `VITE_FIREBASE_PROJECT_ID="${activeFirebaseConfig.projectId}"
+VITE_FIREBASE_APP_ID="${activeFirebaseConfig.appId}"
+VITE_FIREBASE_API_KEY="${activeFirebaseConfig.apiKey}"
+VITE_FIREBASE_AUTH_DOMAIN="${activeFirebaseConfig.authDomain}"
+VITE_FIREBASE_DATABASE_ID="${activeFirebaseConfig.firestoreDatabaseId}"
+VITE_FIREBASE_STORAGE_BUCKET="${activeFirebaseConfig.storageBucket}"
+VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
+
+  const handleCopyVercelEnvVars = () => {
+    navigator.clipboard.writeText(vercelEnvBlock);
+    setCopiedEnvVars(true);
+    showToast('Variáveis de ambiente do Firebase copiadas para colar na Vercel!');
+    setTimeout(() => setCopiedEnvVars(false), 3000);
+  };
+
   const pendingManagersCount = allManagers.filter((m) => m.status === 'pending').length;
 
   // IF USER IS LOGGED INTO FIREBASE BUT PENDING APPROVAL BY THE 1ST MANAGER:
@@ -961,6 +979,67 @@ export const ManagerView: React.FC = () => {
             </span>
           </button>
         </form>
+
+        {/* Helper for users who deployed to Vercel BEFORE creating the Firebase Database */}
+        <div className="pt-3 border-t border-stone-200/80 space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowVercelGuideOnLogin((prev) => !prev)}
+            className="w-full py-2 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-xs font-bold text-[#344E41] flex items-center justify-between transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <Layers className="w-4 h-4 shrink-0" />
+              <span>Subiu na Vercel antes do banco? Veja como conectar</span>
+            </span>
+            <span className="text-[11px] underline">{showVercelGuideOnLogin ? 'Ocultar' : 'Abrir Guia'}</span>
+          </button>
+
+          {showVercelGuideOnLogin && (
+            <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 text-xs text-stone-700 space-y-3 leading-relaxed">
+              <div className="space-y-1">
+                <p className="font-bold text-stone-900">1. Atualize o código na Vercel (GitHub / Redeploy)</p>
+                <p className="text-[11px] text-stone-600">
+                  Como você subiu na Vercel antes de criarmos o banco, envie esta versão atualizada do código para o seu GitHub/Vercel. O arquivo <code>firebase-applet-config.json</code> já está configurado com o banco <strong>{activeFirebaseConfig.projectId}</strong>.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-stone-900">2. Ou cole as Variáveis na Vercel (Environment Variables)</p>
+                  <button
+                    type="button"
+                    onClick={handleCopyVercelEnvVars}
+                    className="px-2.5 py-1 rounded-lg bg-[#344E41] hover:bg-[#284136] text-white font-bold text-[11px] flex items-center gap-1 shrink-0"
+                  >
+                    {copiedEnvVars ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedEnvVars ? 'Copiado!' : 'Copiar .env'}</span>
+                  </button>
+                </div>
+                <pre className="p-2.5 rounded-xl bg-stone-900 text-stone-100 font-mono text-[10px] overflow-x-auto">
+                  {vercelEnvBlock}
+                </pre>
+              </div>
+
+              <div className="space-y-1">
+                <p className="font-bold text-stone-900">3. Libere seu domínio .vercel.app no Firebase</p>
+                <p className="text-[11px] text-stone-600">
+                  No Console do Firebase (projeto <strong>{activeFirebaseConfig.projectId}</strong>), acesse{' '}
+                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> e adicione seu domínio{' '}
+                  <code>seu-app.vercel.app</code>.
+                </p>
+                <a
+                  href={`https://console.firebase.google.com/project/${activeFirebaseConfig.projectId}/authentication/settings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#344E41] underline pt-0.5"
+                >
+                  <span>Abrir Firebase Authentication Settings</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1883,38 +1962,98 @@ export const ManagerView: React.FC = () => {
           </form>
 
           {/* Vercel & Cloud Database Guide */}
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
-                <Layers className="w-5 h-5" />
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-base text-stone-900">
+                    Como Conectar sua Vercel ao Firebase (Passo a Passo)
+                  </h4>
+                  <p className="text-xs text-stone-500">
+                    Projeto Firebase ativo: <strong className="text-stone-800">{activeFirebaseConfig.projectId}</strong> &bull; Banco:{' '}
+                    <code className="font-mono text-[11px]">{activeFirebaseConfig.firestoreDatabaseId}</code>
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="font-bold text-base text-stone-900">
-                  Publicação na Vercel &amp; Banco de Dados em Nuvem
-                </h4>
-                <p className="text-xs text-stone-500">
-                  O aplicativo já está preparado com <code>vercel.json</code> e conectado ao Firebase Firestore.
+
+              <button
+                type="button"
+                onClick={syncLocalDataToCloud}
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 transition-colors self-start sm:self-auto"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>Sincronizar Dados Atuais para o Firebase</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-stone-600">
+              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
+                <span className="font-bold text-stone-900 block">
+                  Passo 1: Atualizar o Deploy na Vercel
+                </span>
+                <p className="leading-relaxed">
+                  Como você subiu na Vercel <strong>antes</strong> de criar o banco de dados, basta atualizar o código no seu repositório GitHub conectado à Vercel (ou fazer um novo deploy). O código agora já inclui a conexão automática com o Firebase.
                 </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
+                <span className="font-bold text-stone-900 block">
+                  Passo 2: Variáveis de Ambiente na Vercel
+                </span>
+                <p className="leading-relaxed">
+                  Na Vercel, vá em <strong>Settings &rarr; Environment Variables</strong>, clique no botão abaixo para copiar todas as chaves do Firebase e cole direto na Vercel (depois clique em <strong>Redeploy</strong>).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCopyVercelEnvVars}
+                  className="mt-1 min-h-[36px] px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs inline-flex items-center gap-1.5"
+                >
+                  {copiedEnvVars ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedEnvVars ? 'Variáveis Copiadas!' : 'Copiar Variáveis .env'}</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
+                <span className="font-bold text-stone-900 block">
+                  Passo 3: Autorizar Domínio .vercel.app
+                </span>
+                <p className="leading-relaxed">
+                  Para o Login funcionar no endereço da Vercel, abra o Console do Firebase em{' '}
+                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> e adicione seu domínio{' '}
+                  <code>seu-projeto.vercel.app</code>.
+                </p>
+                <a
+                  href={`https://console.firebase.google.com/project/${activeFirebaseConfig.projectId}/authentication/settings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[#344E41] underline pt-1"
+                >
+                  <span>Abrir Console do Firebase</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-stone-600">
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
-                <span className="font-bold text-stone-900 block">1. Subir na Vercel</span>
-                <p className="leading-relaxed">
-                  • Conecte este repositório na sua conta da <strong>Vercel</strong>.<br />
-                  • Comando de Build: <code className="font-mono bg-white px-1.5 py-0.5 rounded border">npm run build</code><br />
-                  • Diretório de Saída: <code className="font-mono bg-white px-1.5 py-0.5 rounded border">dist</code>
-                </p>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-700">
+                  Variáveis prontas para colar na Vercel (Settings &rarr; Environment Variables):
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyVercelEnvVars}
+                  className="text-xs font-bold text-[#344E41] hover:underline flex items-center gap-1"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{copiedEnvVars ? 'Copiado!' : 'Copiar tudo'}</span>
+                </button>
               </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-1.5">
-                <span className="font-bold text-stone-900 block">2. Domínio Autorizado no Firebase</span>
-                <p className="leading-relaxed">
-                  • Após gerar seu link <code>.vercel.app</code>, adicione-o no Console do Firebase em{' '}
-                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> para habilitar o login do Gestor na Vercel.
-                </p>
-              </div>
+              <pre className="p-3.5 rounded-2xl bg-stone-900 text-stone-100 font-mono text-[11px] overflow-x-auto leading-relaxed">
+                {vercelEnvBlock}
+              </pre>
             </div>
           </div>
 
