@@ -70,6 +70,7 @@ export const ManagerView: React.FC = () => {
     approveOrRevokeManager,
     removePendingManager,
     syncLocalDataToCloud,
+    importFullChurchBackup,
     managerLogin,
     managerLogout,
     churchInfo,
@@ -218,11 +219,16 @@ export const ManagerView: React.FC = () => {
       await loginWithGoogleCloud(authChurchName);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setAuthErrorMsg(
-        msg.includes('popup-closed')
-          ? 'Janela de login fechada antes de concluir.'
-          : `Não foi possível autenticar com o Google: ${msg}`
-      );
+      if (msg.includes('popup-closed')) {
+        setAuthErrorMsg('Janela de login fechada antes de concluir.');
+      } else if (msg.includes('unauthorized-domain')) {
+        setShowVercelGuideOnLogin(true);
+        setAuthErrorMsg(
+          `Domínio atual (${window.location.hostname}) ainda não foi adicionado em "Authorized domains" no Firebase. Veja o Passo 3 abaixo para autorizar em 10 segundos!`
+        );
+      } else {
+        setAuthErrorMsg(`Não foi possível autenticar com o Google: ${msg}`);
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -677,6 +683,7 @@ export const ManagerView: React.FC = () => {
       churchInfo,
       bulletins,
       birthdays,
+      deaconSchedules,
       banners,
       settings,
       exportedAt: new Date().toISOString()
@@ -689,6 +696,20 @@ export const ManagerView: React.FC = () => {
     downloadAnchor.click();
     downloadAnchor.remove();
     showToast('Backup exportado com sucesso!');
+  };
+
+  const handleImportBackupFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        void importFullChurchBackup(text);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const vercelEnvBlock = `VITE_FIREBASE_PROJECT_ID="${activeFirebaseConfig.projectId}"
@@ -2060,18 +2081,31 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           {/* Backup & Export Area */}
           <div className="bg-white rounded-3xl p-6 border border-stone-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h4 className="font-bold text-sm text-stone-900">Backup e Exportação de Dados</h4>
+              <h4 className="font-bold text-sm text-stone-900">Backup, Exportação e Migração de Dados</h4>
               <p className="text-xs text-stone-500">
-                Baixe uma cópia JSON de todos os dados cadastrados (boletins, membros, cultos e banners).
+                Exporte ou importe uma cópia JSON completa (informações da igreja, boletins, escala de diáconos, aniversariantes e banners) direto para o Firebase.
               </p>
             </div>
-            <button
-              onClick={handleExportBackup}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs flex items-center gap-2 transition-colors self-start sm:self-auto"
-            >
-              <Download className="w-4 h-4 text-[#344E41]" />
-              <span>Exportar Backup (JSON)</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+              <label className="min-h-[44px] px-4 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] text-[#344E41] font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer">
+                <Upload className="w-4 h-4" />
+                <span>Importar Backup (JSON)</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleImportBackupFile}
+                  className="hidden"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs flex items-center gap-2 transition-colors"
+              >
+                <Download className="w-4 h-4 text-[#344E41]" />
+                <span>Exportar Backup (JSON)</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

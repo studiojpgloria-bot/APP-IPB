@@ -99,6 +99,7 @@ interface ChurchContextType {
   approveOrRevokeManager: (targetUid: string, status: ManagerApprovalStatus) => Promise<void>;
   removePendingManager: (targetUid: string) => Promise<void>;
   syncLocalDataToCloud: () => Promise<void>;
+  importFullChurchBackup: (jsonText: string) => Promise<void>;
   managerLogin: (email: string, password: string) => boolean;
   managerLogout: () => void;
 
@@ -362,6 +363,51 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       showToast('Todos os dados da igreja foram salvos no Banco de Dados em Nuvem!');
     } catch {
       showToast('Erro ao sincronizar dados com o banco na nuvem.', 'error');
+    }
+  };
+
+  // Import a full JSON backup from a previous deployment and sync to Firestore
+  const importFullChurchBackup = async (jsonText: string) => {
+    try {
+      const parsed = JSON.parse(jsonText);
+      const nextInfo: ChurchInfo = parsed.churchInfo || churchInfo;
+      const nextBulletins: Bulletin[] = Array.isArray(parsed.bulletins) ? parsed.bulletins : bulletins;
+      const nextBirthdays: BirthdayPerson[] = Array.isArray(parsed.birthdays) ? parsed.birthdays : birthdays;
+      const nextDeacons: DeaconScheduleItem[] = Array.isArray(parsed.deaconSchedules)
+        ? parsed.deaconSchedules
+        : deaconSchedules;
+      const nextBanners: Banner[] = Array.isArray(parsed.banners) ? parsed.banners : banners;
+      const nextSettings: AppSettings = parsed.settings ? { ...settings, ...parsed.settings } : settings;
+
+      setChurchInfoState(nextInfo);
+      setBulletinsState(nextBulletins);
+      setBirthdaysState(nextBirthdays);
+      setDeaconSchedulesState(nextDeacons);
+      setBannersState(nextBanners);
+      setSettingsState(nextSettings);
+
+      ChurchStorageService.saveChurchInfo(nextInfo);
+      ChurchStorageService.saveBulletins(nextBulletins);
+      ChurchStorageService.saveBirthdays(nextBirthdays);
+      ChurchStorageService.saveDeaconSchedules(nextDeacons);
+      ChurchStorageService.saveBanners(nextBanners);
+      ChurchStorageService.saveSettings(nextSettings);
+
+      if (isApprovedCloudManager) {
+        await CloudChurchService.seedAllChurchDataToCloud({
+          churchInfo: nextInfo,
+          bulletins: nextBulletins,
+          birthdays: nextBirthdays,
+          deaconSchedules: nextDeacons,
+          banners: nextBanners,
+          settings: nextSettings
+        });
+        showToast('Backup importado e gravado com sucesso no Firebase!');
+      } else {
+        showToast('Backup importado localmente! Faça login como Gestor para enviar ao Firebase.');
+      }
+    } catch {
+      showToast('Arquivo de backup inválido. Selecione um JSON válido.', 'error');
     }
   };
 
@@ -865,6 +911,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         approveOrRevokeManager,
         removePendingManager,
         syncLocalDataToCloud,
+        importFullChurchBackup,
         managerLogin,
         managerLogout,
         notes,
