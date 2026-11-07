@@ -1,4 +1,87 @@
-export type ViewMode = 'home' | 'bible' | 'bulletins' | 'birthdays' | 'deacons' | 'church' | 'manager';
+export type ViewMode =
+  | 'directory'
+  | 'admin'
+  | 'home'
+  | 'bible'
+  | 'bulletins'
+  | 'birthdays'
+  | 'deacons'
+  | 'church'
+  | 'manager';
+
+export type UserRole = 'owner' | 'gestor' | 'membro';
+export type TeamRole = 'admin' | 'editor';
+export type ChurchStatus = 'ativa' | 'bloqueada' | 'pendente';
+
+export type DeaconScheduleCategory =
+  | 'semana_oracao'
+  | 'quinta_estudo'
+  | 'domingo_manha'
+  | 'domingo_noite'
+  | 'evento_especial';
+
+export type BannerPosition = 'topo' | 'meio' | 'rodape';
+
+export type ManagerApprovalStatus = 'approved' | 'pending' | 'revoked';
+
+export interface ChurchTeamMember {
+  email: string;
+  name?: string;
+  uid?: string;
+  role: TeamRole;
+  status: 'active' | 'pending';
+  invitedAt: string;
+  invitedBy?: string;
+}
+
+export interface PlatformUser {
+  uid: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  churchId?: string;
+  churchSlug?: string;
+  managedChurchIds?: string[];
+  status?: ManagerApprovalStatus;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface PlatformSettings {
+  appName: string;
+  tagline: string;
+  updatedAt?: unknown;
+}
+
+export interface ChurchManagerAccount {
+  uid: string;
+  email: string;
+  name: string;
+  role: 'owner' | 'gestor';
+  status: ManagerApprovalStatus;
+  churchId?: string;
+  churchSlug?: string;
+  requestedAt: unknown;
+  approvedAt?: unknown;
+  approvedBy?: string;
+}
+
+export interface ChurchRegistry {
+  churchId: string;
+  churchName: string;
+  ownerUid: string;
+  ownerEmail: string;
+  ownerName: string;
+  createdAt: unknown;
+}
+
+export interface PublicationAuditFields {
+  createdByName?: string;
+  createdByEmail?: string;
+  updatedByName?: string;
+  updatedByEmail?: string;
+  updatedAt?: string;
+}
 
 export interface ScheduleItem {
   id: string;
@@ -9,35 +92,14 @@ export interface ScheduleItem {
   location?: string;
 }
 
-export type DeaconScheduleCategory =
-  | 'semana_oracao'
-  | 'quinta_estudo'
-  | 'domingo_manha'
-  | 'domingo_noite'
-  | 'evento_especial';
-
-export interface DeaconScheduleItem {
-  id: string;
-  category: DeaconScheduleCategory;
-  date: string; // YYYY-MM-DD
-  serviceName: string; // e.g., "Semana de Oração", "Culto de Estudo e Oração", "Culto Dominical (Manhã)", "Culto Dominical (Noite)", "Evento Especial"
-  time: string; // e.g., "09h00", "19h30"
-  coordinator: string; // Diácono Coordenador de Plantão
-  coordinatorPhone?: string; // WhatsApp para contato/troca
-  receptionTeam: string[]; // Porta e Acolhimento
-  offeringAndCommunionTeam: string[]; // Coleta de Dízimos, Ofertas e Santa Ceia
-  parkingAndOrderTeam: string[]; // Pátio, Estacionamento e Ordem
-  notes?: string; // Observações ou detalhes do evento especial
-}
-
 export interface LeaderMember {
   id: string;
   name: string;
   role: string;
-  bio?: string;
+  bio: string;
   photoUrl: string;
-  phone?: string;
   email?: string;
+  phone?: string;
 }
 
 export interface ChurchInfo {
@@ -56,12 +118,35 @@ export interface ChurchInfo {
   instagramUrl: string;
   youtubeUrl: string;
   facebookUrl: string;
+  logoUrl: string;
   schedules: ScheduleItem[];
   leadership: LeaderMember[];
-  logoUrl: string;
 }
 
-export interface Bulletin {
+export interface ChurchTenant extends ChurchInfo {
+  id: string;
+  slug: string;
+  city: string;
+  state: string;
+  status: ChurchStatus;
+  themeColor: string;
+  latitude?: number;
+  longitude?: number;
+  ownerUid: string;
+  ownerEmail: string;
+  ownerName?: string;
+  adminUids?: string[];
+  adminEmails?: string[];
+  editorUids?: string[];
+  editorEmails?: string[];
+  managerUids: string[];
+  managerEmails: string[];
+  teamMembers?: ChurchTeamMember[];
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface Bulletin extends PublicationAuditFields {
   id: string;
   title: string;
   editionDate: string; // YYYY-MM-DD
@@ -70,7 +155,6 @@ export interface Bulletin {
   type: 'pdf' | 'text';
   pdfUrl?: string;
   pdfFileName?: string;
-  textContent?: string;
   themeVerse?: string;
   pastoralWord?: string;
   orderOfService?: string[];
@@ -78,37 +162,76 @@ export interface Bulletin {
   createdAt: string;
 }
 
-export interface BirthdayPerson {
+export interface BirthdayPerson extends PublicationAuditFields {
   id: string;
   name: string;
-  birthDay: number; // 1-31
-  birthMonth: number; // 1-12
+  birthDay: number; // 1 - 31
+  birthMonth: number; // 1 - 12
   birthYear?: number;
   phone?: string;
   photoUrl?: string;
   ministry?: string;
 }
 
-export type BannerPosition = 'topo' | 'meio' | 'rodape';
+export interface DeaconScheduleItem extends PublicationAuditFields {
+  id: string;
+  category: DeaconScheduleCategory;
+  date: string; // YYYY-MM-DD
+  serviceName: string;
+  time: string;
+  coordinator: string;
+  coordinatorPhone?: string;
+  receptionTeam: string[];
+  offeringAndCommunionTeam: string[];
+  parkingAndOrderTeam: string[];
+  notes?: string;
+}
 
-export interface Banner {
+export interface Banner extends PublicationAuditFields {
   id: string;
   title: string;
   position: BannerPosition;
   imageUrl: string;
-  linkUrl?: string;
-  openInNewTab?: boolean;
-  startDate?: string;
-  endDate?: string;
+  linkUrl: string;
+  openInNewTab: boolean;
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
   order: number;
   isActive: boolean;
 }
 
-export interface BibleConfig {
-  apiBaseUrl: string;
-  apiKey: string;
-  versionName: string; // e.g., 'almeida_atualizada', 'nvi', etc.
-  requestTimeoutMs: number;
+export interface BibleBook {
+  id: string;
+  name: string;
+  abbrev: string;
+  chaptersCount: number;
+  testament: 'VT' | 'NT';
+  group: string;
+}
+
+export interface BibleVerse {
+  number: number;
+  text: string;
+  book_id?: string;
+  book_name?: string;
+  chapter?: number;
+  verse?: number;
+}
+
+export interface BibleChapterData {
+  bookName: string;
+  bookAbbrev: string;
+  chapter: number;
+  verses: BibleVerse[];
+}
+
+export interface BibleChapterResponse {
+  reference: string;
+  verses: BibleVerse[];
+  text: string;
+  translation_id: string;
+  translation_name: string;
+  isOfflineFallback?: boolean;
 }
 
 export interface UserBibleNote {
@@ -116,10 +239,11 @@ export interface UserBibleNote {
   bookAbbrev: string;
   bookName: string;
   chapter: number;
-  verse?: number;
+  verse: number;
+  verseText?: string;
   reference: string;
   noteText: string;
-  colorTag: string; // hex or category
+  colorTag?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -130,59 +254,24 @@ export interface UserFavoriteVerse {
   bookName: string;
   chapter: number;
   verse: number;
-  reference: string;
   verseText: string;
+  reference: string;
   savedAt: string;
 }
+
+export interface BibleApiConfig {
+  apiBaseUrl: string;
+  apiKey: string;
+  versionName: string;
+  requestTimeoutMs: number;
+}
+
+export type BibleConfig = BibleApiConfig;
 
 export interface AppSettings {
   appName: string;
   themeColor: string;
-  bibleConfig: BibleConfig;
+  bibleConfig: BibleApiConfig;
   managerEmail: string;
   lastUpdated: string;
 }
-
-export interface BibleBook {
-  id: string;
-  abbrev: string;
-  name: string;
-  testament: 'VT' | 'NT';
-  chaptersCount: number;
-  group: string;
-}
-
-export interface BibleVerse {
-  number: number;
-  text: string;
-}
-
-export interface BibleChapterData {
-  bookName: string;
-  bookAbbrev: string;
-  chapter: number;
-  verses: BibleVerse[];
-}
-
-export interface ChurchRegistry {
-  ownerUid: string;
-  ownerEmail: string;
-  ownerName: string;
-  churchName: string;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-}
-
-export type ManagerRole = 'owner' | 'co_manager';
-export type ManagerApprovalStatus = 'approved' | 'pending' | 'revoked';
-
-export interface ChurchManagerAccount {
-  uid: string;
-  email: string;
-  name: string;
-  role: ManagerRole;
-  status: ManagerApprovalStatus;
-  requestedAt?: unknown;
-  updatedAt?: unknown;
-}
-

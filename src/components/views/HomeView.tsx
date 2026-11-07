@@ -105,10 +105,9 @@ export const HomeView: React.FC = () => {
   ];
 
   const todayIso = today.toISOString().split('T')[0];
-  const nextDeaconDuty =
-    [...deaconSchedules]
-      .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
-      .find((s) => s.date >= todayIso) || deaconSchedules[0];
+  const nextDeaconDuty = [...deaconSchedules]
+    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+    .find((s) => s.date >= todayIso);
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-6">
@@ -124,16 +123,6 @@ export const HomeView: React.FC = () => {
               <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
               <span>Bem-vindo à comunhão</span>
             </div>
-            {!isMobileAppPreview && (
-              <button
-                type="button"
-                onClick={() => setIsMobileAppPreview(true)}
-                className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs font-semibold text-white transition-colors"
-              >
-                <Smartphone className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                <span>Abrir Versão App Mobile</span>
-              </button>
-            )}
           </div>
 
           <h1
@@ -141,29 +130,43 @@ export const HomeView: React.FC = () => {
               isMobileAppPreview ? 'text-2xl' : 'text-2xl sm:text-4xl'
             }`}
           >
-            {churchInfo.name}
+            {churchInfo.name || 'Bem-vindo ao Aplicativo da Igreja'}
           </h1>
           <p className={`text-stone-200 leading-relaxed ${isMobileAppPreview ? 'text-xs' : 'text-xs sm:text-base'}`}>
-            {churchInfo.tagline}. Junte-se a nós para adorar a Deus, aprender da Sua Palavra e crescer em comunidade.
+            {churchInfo.tagline
+              ? `${churchInfo.tagline}. Junte-se a nós para adorar a Deus, aprender da Sua Palavra e crescer em comunidade.`
+              : 'Acesse o Painel do Gestor para cadastrar o nome da sua igreja, horários de cultos, pastores, boletins e escalas.'}
           </p>
 
           <div className="pt-2 flex flex-wrap items-center gap-2.5">
-            <button
-              onClick={() => setCurrentView('church')}
-              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white text-[#284136] font-semibold text-xs sm:text-sm hover:bg-stone-100 shadow-sm transition-transform active:scale-95 flex items-center gap-2"
-            >
-              <span>Horários dos Cultos</span>
-              <ArrowRight className="w-4 h-4 shrink-0" />
-            </button>
-            <a
-              href={`https://wa.me/${churchInfo.whatsappNumber}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 text-white font-medium text-xs sm:text-sm transition-colors flex items-center gap-2"
-            >
-              <MessageCircle className="w-4 h-4 shrink-0" />
-              <span>Fale Conosco</span>
-            </a>
+            {churchInfo.name ? (
+              <button
+                onClick={() => setCurrentView('church')}
+                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white text-[#284136] font-semibold text-xs sm:text-sm hover:bg-stone-100 shadow-sm transition-transform active:scale-95 flex items-center gap-2"
+              >
+                <span>Horários dos Cultos</span>
+                <ArrowRight className="w-4 h-4 shrink-0" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setCurrentView('manager')}
+                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white text-[#284136] font-semibold text-xs sm:text-sm hover:bg-stone-100 shadow-sm transition-transform active:scale-95 flex items-center gap-2"
+              >
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>Configurar Sistema no Gestor</span>
+              </button>
+            )}
+            {churchInfo.whatsappNumber && (
+              <a
+                href={`https://wa.me/${churchInfo.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage || '')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 text-white font-medium text-xs sm:text-sm transition-colors flex items-center gap-2"
+              >
+                <MessageCircle className="w-4 h-4 shrink-0" />
+                <span>Fale Conosco</span>
+              </a>
+            )}
           </div>
         </div>
 
@@ -394,7 +397,7 @@ export const HomeView: React.FC = () => {
                   É hoje! Parabéns!
                 </span>
                 <h4 className="font-bold text-stone-900 text-sm truncate">{todayBirthdays[0].name}</h4>
-                <p className="text-xs text-stone-600 truncate">{todayBirthdays[0].ministry || 'Membro da IPC'}</p>
+                <p className="text-xs text-stone-600 truncate">{todayBirthdays[0].ministry || 'Membro da Igreja'}</p>
               </div>
               {todayBirthdays[0].phone && (
                 <a
@@ -580,26 +583,32 @@ export const HomeView: React.FC = () => {
             <span>Faça-nos uma visita</span>
           </h3>
           <p className="text-xs sm:text-sm text-stone-600">
-            {churchInfo.address} · {churchInfo.cityStateZip}
+            {churchInfo.address || churchInfo.cityStateZip
+              ? [churchInfo.address, churchInfo.cityStateZip].filter(Boolean).join(' · ')
+              : 'Configure o endereço e telefone da igreja no Painel do Gestor.'}
           </p>
         </div>
         <div className={`flex items-center gap-2 ${isMobileAppPreview ? 'w-full' : 'w-full md:w-auto'}`}>
-          <a
-            href={churchInfo.googleMapsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 md:flex-none min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 flex items-center justify-center gap-1.5 transition-colors"
-          >
-            <span>Ver no Google Maps</span>
-            <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-          </a>
-          <a
-            href={`tel:${churchInfo.primaryPhone.replace(/\D/g, '')}`}
-            className="min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl bg-[#EAF0EC] hover:bg-[#dce6e0] text-[#344E41] flex items-center justify-center gap-1.5 transition-colors shrink-0"
-          >
-            <Phone className="w-3.5 h-3.5 shrink-0" />
-            <span>Ligar</span>
-          </a>
+          {churchInfo.googleMapsUrl && (
+            <a
+              href={churchInfo.googleMapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 md:flex-none min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <span>Ver no Google Maps</span>
+              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+            </a>
+          )}
+          {churchInfo.primaryPhone && (
+            <a
+              href={`tel:${churchInfo.primaryPhone.replace(/\D/g, '')}`}
+              className="min-h-[44px] px-4 py-2 text-xs font-semibold rounded-xl bg-[#EAF0EC] hover:bg-[#dce6e0] text-[#344E41] flex items-center justify-center gap-1.5 transition-colors shrink-0"
+            >
+              <Phone className="w-3.5 h-3.5 shrink-0" />
+              <span>Ligar</span>
+            </a>
+          )}
         </div>
       </section>
 

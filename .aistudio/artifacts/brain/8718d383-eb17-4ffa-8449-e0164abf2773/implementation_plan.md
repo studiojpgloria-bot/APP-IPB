@@ -1,114 +1,85 @@
-# Aplicativo Web da Igreja Presbiteriana Central (Mobile-First)
+# Reset Completo das Informações Padrão do Sistema (Configuração do Zero pelo Gestor)
 
-Aplicativo web moderno, responsivo e acolhedor para membros e visitantes da igreja, com navegação fluida em smartphones e computadores, leitura bíblica com anotações privadas, boletins interativos, aniversariantes do mês, banners de avisos e painel administrativo completo para o perfil Gestor.
+Este plano remove todos os dados fictícios/demonstrativos do sistema (informações da igreja, cultos, pastores/líderes, boletins, escalas diaconais, aniversariantes, banners, notas e versículos favoritos de exemplo da Bíblia), entregando o aplicativo totalmente limpo para que o Gestor configure cada seção do zero, mantendo sua conta de **1º Gestor Principal** ativa e aprovada no Firebase.
+
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Decisões confirmadas pelo usuário:**
-> - **Paleta visual:** Verde sálvia suave (`#4A6B5D`), cinza quente (`#F4F3EF`), ardósia suave (`#2D3748`) e branco off-white acolhedor (`#FAF9F6`).
-> - **Nome e Congregação inicial:** Igreja Presbiteriana Central.
-> - **Modo da Bíblia na fase inicial:** Conexão direta com API externa configurável (com fallback elegante e robusto para testes imediatos sem travar a interface).
-> - **Persistência de Dados (Fase de Testes):** Camada de armazenamento modular em `LocalStorage` com modelos tipados, imagens/PDFs comprimidos em memória e exportação/importação, pronta para ligar ao Firebase Firestore + Firebase Storage quando o usuário solicitar a subida para nuvem.
+> As decisões abaixo refletem exatamente as suas escolhas confirmadas:
+
+- **Dados Padrão Totalmente Zerados**: Todas as listas e campos iniciais (Informações da Igreja, Horários de Cultos, Pastores/Liderança, Boletins, Escala de Diáconos, Aniversariantes e Banners) passarão a iniciar vazios (`[]` e campos em branco), atualizando a versão das chaves de armazenamento local para que o estado limpo entre em vigor imediatamente.
+- **Bíblia Sagrada Sem Exemplos Pré-Carregados**: As anotações pessoais e os versículos favoritos de demonstração iniciarão vazios (`[]`), mantendo apenas o texto bíblico completo dos 66 livros para leitura e pesquisa.
+- **Conta de 1º Gestor Preservada**: O registro de titularidade (`church_config/registry`) e sua conta aprovada em `church_managers` permanecem intactos no Firebase, além de incluir um botão rápido no Painel do Gestor (**"Zerar / Limpar Conteúdo no Banco"**) caso deseje limpar também dados antigos que já tenham sido gravados na nuvem anteriormente.
 
 ---
 
-## 1. Visão Geral e Conceito
+## 1. Overview & Core Concept
 
-O aplicativo serve como a central de comunicação e espiritualidade da igreja no bolso de cada membro e visitante:
-- **Perfil Usuário (Acesso Livre):** Não necessita de cadastro ou login prévio. Acessa a página inicial com banners informativos, leitura da Bíblia, boletins da semana, aniversariantes e dados de contato/pastores.
-- **Perfil Gestor (Autenticado):** Login discreto via e-mail e senha (com credenciais de demonstração pré-configuradas no primeiro carregamento). Permite criar, editar e excluir todas as informações, banners, boletins e membros aniversariantes, além de alterar configurações gerais da igreja e chaves de API.
-
----
-
-## 2. Experiência do Usuário e Design Visual
-
-### Identidade e Estilo (Design Verde Sálvia & Acolhedor)
-- **Cores principais:**
-  - Primária: Verde Sálvia profundo (`#3F5E52` / `bg-emerald-900/90` refinado) para botões de destaque, cabeçalhos e detalhes nobres.
-  - Secundária / Acentos: Ocre suave (`#C5A059`) e verde menta sálvia suave (`#E7EFEA`).
-  - Fundo & Superfícies: Off-white linho (`#F9F8F5`), cartões em branco puro com bordas sutis em cinza quente (`border-stone-200/80`).
-- **Ergonomia Mobile-First:**
-  - **Barra de navegação inferior fixa:** Início, Bíblia, Boletim, Aniversariantes e Igreja (hitboxes com $\ge 44\text{px}$ para o polegar).
-  - **Banner Topo:** Posicionado acima do cabeçalho da marca com altura contida para não comprometer a área útil de rolagem.
-  - **Sem "AI Slop":** Tipografia serena, sem pílulas decorativas estáticas soltas, espaçamento generoso e legibilidade WCAG AA.
-  - **Área do Gestor:** Acesso discreto no rodapé e no menu lateral do cabeçalho.
+- **O Que Faz**: Transforma o aplicativo em uma plataforma limpa (estado zero), sem textos, fotos, telefones ou membros de demonstração pré-preenchidos, pronta para receber os dados reais da sua igreja.
+- **Público-Alvo**: O Gestor Principal da igreja (que fará o preenchimento inicial de cada módulo) e os membros/visitantes (que verão avisos elegantes de *"Em atualização pela secretaria da igreja"* nas seções ainda não preenchidas).
+- **Valor Principal**: Evita que informações fictícias apareçam misturadas com os dados reais da igreja ou precisem ser excluídas item por item manualmente.
 
 ---
 
-## 3. Arquitetura do Sistema e Fluxo de Dados
+## 2. User Experience & Visual Design
+
+- **Fluxo do Gestor e Visitantes no Estado Vazio (Zero-State)**:
+  1. **Informações da Igreja, Cultos e Liderança**: Campos de endereço, história, missão, redes sociais, WhatsApp e logotipo iniciam em branco; listas de horários de cultos e liderança iniciam com `0` itens, exibindo um estado vazio orientativo com atalho direto para o Gestor cadastrar.
+  2. **Boletins, Escala de Diáconos, Aniversariantes e Banners**: Iniciam com `0` registros cadastrados. Os espaços de banners (`topo`, `meio`, `rodape`) ficam automaticamente ocultos quando vazios, e as páginas públicas exibem cartões limpos informando que ainda não há registros publicados.
+  3. **Bíblia Sagrada**: O leitor bíblico continua 100% funcional com os 66 livros, mas as abas *"Minhas Notas"* e *"Favoritos"* começam com `0` itens até que o próprio usuário salve suas marcações.
+- **Identidade Visual & Tema**:
+  - *Direção Estética*: Editorial acolhedor e reverente (Mobile-First PWA com expansão multi-coluna até `1152px` no desktop).
+  - *Paleta de Cores*: Superfície principal em marfim suave (`#FAF9F6`), cartões estruturais em branco puro (`#FFFFFF`) com bordas sutis (`border-stone-200`), cor primária institucional Verde Presbiteriano (`#344E41`) e destaque sóbrio em ocre (`#B08938`).
+  - *Tipografia & Hierarquia*: Títulos em serifada clássica e interface funcional em sans-serif limpa, com controles de linha única (`whitespace-nowrap`) e áreas de toque mínimas de `44x44px`.
+- **Feedback Interativo**:
+  - Estados vazios claros em todas as telas públicas e no painel do Gestor, sem imagens quebradas ou links de WhatsApp/Maps inválidos quando os números/links ainda estiverem em branco.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decisão 1: Atualização de Versão do Cache Inicial + Sincronização com Nuvem**
+  - *Abordagem Escolhida*: Definir `INITIAL_CHURCH_INFO`, `INITIAL_BULLETINS`, `INITIAL_BIRTHDAYS`, `INITIAL_DEACON_SCHEDULES`, `INITIAL_BANNERS`, `getInitialNotes()` e `getInitialFavorites()` como vazios e incrementar as chaves do `localStorage` (`v3`), além de disponibilizar a ação **"Limpar / Zerar Conteúdo da Igreja"** no Painel do Gestor para sobrescrever na nuvem qualquer dado de exemplo antigo.
+  - *Por quê*: Garante que qualquer novo acesso já carregue o sistema 100% em branco e permite ao 1º Gestor limpar também o documento `church_data` no Firestore com 1 clique sem perder seu login.
+- **Decisão 2: Proteção Visual para Campos de Contato Não Preenchidos**
+  - *Abordagem Escolhida*: Ocultar ou desabilitar automaticamente botões de *"Falar no WhatsApp"*, *"Como Chegar (Google Maps)"* e ícones de redes sociais na tela inicial, rodapé e página da igreja enquanto o gestor ainda não tiver configurado esses links/números.
+  - *Por quê*: Impede que visitantes cliquem em botões que levem a links vazios antes da configuração pelo Gestor.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+- **Architecture & Component Diagram**:
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        APLICAÇÃO WEB (REACT + TS)                      │
-├──────────────────────────────────┬─────────────────────────────────────┤
-│        VISÃO PÚBLICA (USUÁRIO)    │        PAINEL DO GESTOR (AUTH)      │
-│  - Banner Topo Rotativo          │  - Gestão de Banners (3 posições)   │
-│  - Cabeçalho & Menu              │  - Gestão de Boletins (PDF / Texto) │
-│  - Atalhos rápidos dos módulos   │  - Aniversariantes & Import CSV     │
-│  - Banner Meio Rotativo          │  - Dados da Igreja & Liderança      │
-│  - Destaques (Boletim/Níver)     │  - Configurações do App & Bíblia API│
-│  - Banner Rodapé                 │  - Upload/Compressão de Imagens/PDF │
-│  - Rodapé com Link Gestor        │                                     │
-├──────────────────────────────────┴─────────────────────────────────────┤
-│                         MÓDULOS ESPECIALIZADOS                         │
-│  [1. Bíblia API]   [2. Info Igreja]   [3. Boletim]   [4. Nívers]       │
-│  - Navegação Livro │  - História/Cultos│ - Leitor PDF │ - Destaque Dia  │
-│  - Busca Palavra   │  - Botão WhatsApp │ - Modo Texto │ - Seletor Mês   │
-│  - Anotações Locais│  - Google Maps    │ - Download   │ - Filtros       │
-│  - Favoritos       │  - Pastores/Fotos │              │                 │
-├────────────────────────────────────────────────────────────────────────┤
-│                      CAMADA DE SERVIÇOS & DADOS                        │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ ChurchStorageService (Abstração Unificada)                       │  │
-│  │ - Estado Inicial Pré-populado (Igreja Presbiteriana Central)     │  │
-│  │ - Persistência LocalStorage isolada                              │  │
-│  │ - Pronto para Firebase Firestore / Storage (sem refatoração)     │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────┐ ┌──────────────────────────────┐  │
-│  │ BibleApiService                 │ │ AuthService (Gestor)         │  │
-│  │ - URL Base & Chave Configurável │ │ - Sessão Gestor Persistente  │  │
-│  │ - Cache local e Tratamento Erro │ │ - Logout e Proteção de Rotas │  │
-│  └─────────────────────────────────┘ └──────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ESTADO INICIAL LIMPO (ZERO-STATE)                    │
+│  • ChurchInfo: campos em branco, schedules: [], leadership: []          │
+│  • Bulletins: []  |  Birthdays: []  |  Deacons: []  |  Banners: []      │
+│  • Bible Notes: []  |  Bible Favorites: []                              │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   CONTEXTO GLOBAL & FIREBASE FIRESTORE                  │
+│  • Preserva church_config/registry & church_managers (1º Gestor ativo)  │
+│  • Sincroniza cadastros feitos pelo Gestor em tempo real (church_data)  │
+└───────────────┬─────────────────────────────────────────┬───────────────┘
+                │                                         │
+                ▼                                         ▼
+┌───────────────────────────────────┐   ┌─────────────────────────────────┐
+│       VISÃO PÚBLICA (PWA)         │   │        PAINEL DO GESTOR         │
+│  • Exibe estados vazios elegantes │   │  • Formulários limpos prontos   │
+│    quando listas estão vazias     │   │    para configuração item a item│
+│  • Oculta botões WhatsApp/Maps    │   │  • Botão rápido para limpar     │
+│    até serem preenchidos          │   │    dados de exemplo na nuvem    │
+└───────────────────────────────────┘   └─────────────────────────────────┘
 ```
 
----
-
-## 4. Detalhamento dos Módulos
-
-### 1. Bíblia Sagrada
-- **Navegação estruturada:** Seletor de Livro (Antigo e Novo Testamento), Capítulo e Versículo.
-- **Busca rápida:** Busca por palavra-chave ou termo em tempo real.
-- **Configurações de Leitura:** Aumento/diminuição de fonte (A- / A+) e alternância de modo claro / modo leitura sépia / escuro.
-- **Anotações Pessoais Privadas:** Armazenadas exclusivamente no dispositivo do membro (`localStorage`), com listagem "Minhas Anotações", busca e edição.
-- **Favoritos:** Marcador de versículos com coração/estrela salvos privadamente.
-- **Provedor de API:** Conector flexível preparado para a API desejada pelo usuário com chave e endpoints ajustáveis diretamente na tela de configurações do Gestor ou variáveis de ambiente.
-
-### 2. Informações da Igreja
-- História, visão e declaração de fé.
-- Horários dos cultos (Domingo manhã/noite, Quarta, Escola Bíblica, Jovens).
-- Endereço físico integrado com botão direto para o Google Maps / Waze.
-- Telefones, botão direto para conversa de WhatsApp com mensagem pré-preenchida, e-mail e links de redes sociais (YouTube, Instagram, Facebook).
-- Galeria da Liderança Pastoral com fotos, nomes e cargos.
-
-### 3. Boletim Informativo Semanal
-- Lista cronológica com o boletim mais recente em destaque no topo da página inicial e da página de boletins.
-- **Visualizador integrado:** Suporte para arquivos PDF com navegação embutida (rolagem, download e zoom) OU modo texto formatado com título, data, reflexão pastoral e avisos da semana.
-- Gestor com upload de arquivo ou formulário de redação rápida.
-
-### 4. Aniversariantes do Mês
-- Destaque automático para os aniversariantes do dia atual com saudação carinhosa.
-- Lista ordenada por dia do mês com fotos/avatares e idade opcional.
-- Navegação entre meses (Janeiro a Dezembro).
-- Gestor com formulário individual e importador inteligente de planilha CSV.
-
-### 5. Banners de Divulgação (Topo, Meio e Rodapé)
-- **Topo:** Acima do cabeçalho da igreja.
-- **Meio:** Entre os atalhos dos módulos e as seções de destaque.
-- **Rodapé:** No final da página antes dos direitos autorais.
-- **Carrossel inteligente:** Rotação automática suave com temporizador se houver mais de 1 banner ativo na mesma posição, com suporte a links externos de eventos/inscrições.
-- Ocultação automática se não houver banners ativos na posição.
-
-### 6. Painel de Gestão (Perfil Gestor)
-- Autenticação por e-mail e senha (`gestor@igreja.com.br` / `admin123` por padrão para teste imediato).
-- Abas de controle: **Informações Gerais**, **Boletins**, **Aniversariantes**, **Banners** e **Configurações**.
-- Formulários com validação, compressão de imagens em canvas para evitar travamento de memória e confirmação modal antes de exclusões.
+- **Data Model & State**:
+  - `INITIAL_CHURCH_INFO`: `name: ''`, `tagline: ''`, `aboutHistory: ''`, `missionVision: ''`, `address: ''`, `cityStateZip: ''`, `googleMapsUrl: ''`, `primaryPhone: ''`, `secondaryPhone: ''`, `whatsappNumber: ''`, `email: ''`, `instagramUrl: ''`, `youtubeUrl: ''`, `facebookUrl: ''`, `logoUrl: ''`, `schedules: []`, `leadership: []`.
+  - `INITIAL_BULLETINS`, `INITIAL_BIRTHDAYS`, `INITIAL_DEACON_SCHEDULES`, `INITIAL_BANNERS`: todos iniciam como `[]`.
+  - `getInitialNotes()` e `getInitialFavorites()`: retornam `[]` (sem criar notas ou favoritos de demonstração quando o `localStorage` estiver vazio).
+- **Interactive Component & State Mapping**:
+  - **Cabeçalho (`Navbar`), Rodapé (`Footer`), Tela Inicial (`HomeView`) e Página da Igreja (`ChurchInfoView`)**: exibem um placeholder discreto (*"Nome da Igreja — Configurar no Gestor"*) caso `churchInfo.name` ainda esteja vazio e renderizam mensagens de estado vazio para Horários de Cultos e Liderança quando `schedules.length === 0` ou `leadership.length === 0`.
+  - **Painel do Gestor (`ManagerView` & `ChurchContext`)**: inclui a função `resetAllChurchContentToBlank()` para que o 1º Gestor possa zerar instantaneamente também os documentos de conteúdo que já estavam salvos no Firestore, mantendo sua conta de administrador conectada.

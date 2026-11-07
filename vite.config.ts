@@ -14,9 +14,9 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'Igreja Presbiteriana Central',
-          short_name: 'IP Central',
-          description: 'Aplicativo web e mobile da Igreja Presbiteriana Central, com Bíblia offline, anotações pessoais em cache, boletins, aniversariantes e avisos.',
+          name: 'Minha Igreja — Plataforma Digital',
+          short_name: 'Minha Igreja',
+          description: 'Plataforma multi-igreja com Bíblia ACF offline, anotações pessoais em cache, boletins, escala diaconal, aniversariantes e cultos.',
           theme_color: '#344E41',
           background_color: '#FAF9F6',
           display: 'standalone',
@@ -45,6 +45,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
@@ -76,13 +77,13 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/(bible-api\.com|www\.abibliadigital\.com\.br)\/.*/i,
-              handler: 'NetworkFirst',
+              urlPattern: /\/biblia\/.*\.json$/i,
+              handler: 'CacheFirst',
               options: {
-                cacheName: 'bible-api-offline-cache',
+                cacheName: 'acf-bible-json-offline-cache',
                 expiration: {
-                  maxEntries: 150,
-                  maxAgeSeconds: 60 * 60 * 24 * 90,
+                  maxEntries: 80,
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],

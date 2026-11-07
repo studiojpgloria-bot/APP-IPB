@@ -1,8 +1,8 @@
 # Security Specification (`security_spec.md`)
 
 ## 1. Data Invariants
-1. **Single Church Registry Lock (`church_config/registry`)**:
-   - Can only be created **once** when `registry` does not yet exist (`!exists(...)`), or by the bootstrapped admin (`cantordaipb@gmail.com`).
+1. **Platform Owner Lock (`studiojpgloria@gmail.com`)**:
+   - Only the verified platform owner (`studiojpgloria@gmail.com` with `email_verified == true`) has global owner privileges.
    - Prevents any second user from creating a duplicate church registration or overwriting `ownerUid`.
    - `ownerUid` is immutable once created.
 2. **Manager Access & Anti-Duplication (`church_managers/{managerUid}`)**:

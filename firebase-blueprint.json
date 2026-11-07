@@ -1,129 +1,101 @@
 {
   "entities": {
-    "ChurchRegistry": {
-      "title": "ChurchRegistry",
-      "description": "Singleton document in church_config/registry that locks the primary owner (First Manager) of the church to prevent duplicate church accounts.",
+    "PlatformUser": {
+      "title": "PlatformUser",
+      "description": "User account and role mapping (owner or gestor) linked to a specific churchId",
       "type": "object",
       "properties": {
-        "ownerUid": {
-          "type": "string",
-          "maxLength": 128,
-          "description": "Firebase Auth UID of the primary first manager who registered the church."
-        },
-        "ownerEmail": {
-          "type": "string",
-          "maxLength": 200,
-          "description": "Email address of the primary manager."
-        },
-        "ownerName": {
-          "type": "string",
-          "maxLength": 150,
-          "description": "Full name of the primary manager."
-        },
-        "churchName": {
-          "type": "string",
-          "maxLength": 200,
-          "description": "Name of the church configured by the primary manager."
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Creation server timestamp."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Last update server timestamp."
-        }
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "gestor", "membro"] },
+        "churchId": { "type": "string" },
+        "churchSlug": { "type": "string" },
+        "status": { "type": "string", "enum": ["approved", "pending", "revoked"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["ownerUid", "ownerEmail", "ownerName", "churchName", "createdAt", "updatedAt"]
+      "required": ["uid", "email", "name", "role"]
     },
-    "ChurchManager": {
-      "title": "ChurchManager",
-      "description": "Manager account document in church_managers/{uid} tracking approval status by the primary church owner.",
+    "PlatformSettings": {
+      "title": "PlatformSettings",
+      "description": "Global platform configuration and branding",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "maxLength": 128,
-          "description": "Firebase Auth UID matching the document ID."
-        },
-        "email": {
-          "type": "string",
-          "maxLength": 200,
-          "description": "Manager email address."
-        },
-        "name": {
-          "type": "string",
-          "maxLength": 150,
-          "description": "Manager display name."
-        },
-        "role": {
-          "type": "string",
-          "enum": ["owner", "co_manager"],
-          "maxLength": 32,
-          "description": "Role in the church management team."
-        },
-        "status": {
-          "type": "string",
-          "enum": ["approved", "pending", "revoked"],
-          "maxLength": 32,
-          "description": "Approval status controlled by the primary owner."
-        },
-        "requestedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Timestamp when the account requested access."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Timestamp of last status update."
-        }
+        "appName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "email", "name", "role", "status", "requestedAt", "updatedAt"]
+      "required": ["appName"]
     },
-    "ChurchPublicData": {
-      "title": "ChurchPublicData",
-      "description": "Public church data document in church_data/{docId} readable by all congregation members and writable only by approved church managers.",
+    "ChurchTenant": {
+      "title": "ChurchTenant",
+      "description": "Public information, slug, location, status, and authorized managers of a church",
       "type": "object",
       "properties": {
-        "docType": {
-          "type": "string",
-          "enum": ["info", "bulletins", "birthdays", "deacons", "banners", "settings"],
-          "maxLength": 32,
-          "description": "Identifier of the church module data."
-        },
-        "payload": {
-          "type": "object",
-          "description": "Structured module data map for the church."
-        },
-        "updatedByUid": {
-          "type": "string",
-          "maxLength": 128,
-          "description": "UID of the approved manager who saved this update."
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "description": "Server timestamp of the update."
-        }
+        "id": { "type": "string" },
+        "slug": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativa", "bloqueada", "pendente"] },
+        "themeColor": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "ownerUid": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "managerUids": { "type": "array", "items": { "type": "string" } },
+        "managerEmails": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["docType", "payload", "updatedByUid", "updatedAt"]
+      "required": ["id", "slug", "name", "city", "state", "status"]
+    },
+    "SubcollectionItem": {
+      "title": "SubcollectionItem",
+      "description": "Item inside boletins, escalas, aniversariantes, banners, lideranca, or cultos subcollections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" }
+      },
+      "required": ["id"]
     }
   },
   "firestore": {
-    "/church_config/{configId}": {
-      "schema": { "$ref": "#/entities/ChurchRegistry" },
-      "description": "Stores the singleton 'registry' document locking the first manager of the church."
+    "/platform_config/{configId}": {
+      "schema": { "$ref": "#/entities/PlatformSettings" },
+      "description": "Global branding settings for the multi-church platform"
     },
-    "/church_managers/{managerUid}": {
-      "schema": { "$ref": "#/entities/ChurchManager" },
-      "description": "Stores manager accounts and their approval status ('approved', 'pending', 'revoked')."
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/PlatformUser" },
+      "description": "User role and churchId assignment"
     },
-    "/church_data/{moduleId}": {
-      "schema": { "$ref": "#/entities/ChurchPublicData" },
-      "description": "Stores public church content modules ('info', 'bulletins', 'birthdays', 'deacons', 'banners', 'settings')."
+    "/churches/{churchId}": {
+      "schema": { "$ref": "#/entities/ChurchTenant" },
+      "description": "Registered churches on the platform"
+    },
+    "/churches/{churchId}/boletins/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Weekly bulletins of a church"
+    },
+    "/churches/{churchId}/escalas/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Deacon schedules of a church"
+    },
+    "/churches/{churchId}/aniversariantes/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Member birthdays of a church"
+    },
+    "/churches/{churchId}/banners/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Promotional banners of a church"
+    },
+    "/churches/{churchId}/lideranca/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Pastoral leadership and elders/deacons of a church"
+    },
+    "/churches/{churchId}/cultos/{itemId}": {
+      "schema": { "$ref": "#/entities/SubcollectionItem" },
+      "description": "Worship schedules of a church"
     }
   }
 }

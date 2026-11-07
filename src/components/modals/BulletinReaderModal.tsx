@@ -3,7 +3,7 @@ import { BookOpen, Calendar, Download, ExternalLink, FileText, Printer, Share2, 
 import { useChurch } from '../../context/ChurchContext';
 
 export const BulletinReaderModal: React.FC = () => {
-  const { selectedBulletinForReader, setSelectedBulletinForReader, showToast } = useChurch();
+  const { selectedBulletinForReader, setSelectedBulletinForReader, churchInfo, showToast } = useChurch();
   const [zoomLevel, setZoomLevel] = useState(100);
 
   if (!selectedBulletinForReader) return null;
@@ -143,7 +143,7 @@ export const BulletinReaderModal: React.FC = () => {
               {/* Editorial Header */}
               <div className="text-center pb-6 border-b border-stone-200">
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-[#4A6B5D]">
-                  Boletim Semanal da Igreja Presbiteriana Central
+                  Boletim Semanal — {churchInfo.name || 'Igreja'}
                 </span>
                 <h1 className="mt-2 text-2xl sm:text-3xl font-serif font-bold text-stone-900 leading-tight">
                   {b.title}
@@ -174,15 +174,6 @@ export const BulletinReaderModal: React.FC = () => {
                   </h3>
                   <div className="prose prose-stone text-sm sm:text-base text-stone-700 leading-relaxed font-serif whitespace-pre-line">
                     {b.pastoralWord}
-                  </div>
-                </div>
-              )}
-
-              {/* Custom Text Content */}
-              {b.textContent && (
-                <div className="space-y-3">
-                  <div className="prose prose-stone text-sm sm:text-base text-stone-700 leading-relaxed whitespace-pre-line">
-                    {b.textContent}
                   </div>
                 </div>
               )}
@@ -225,7 +216,7 @@ export const BulletinReaderModal: React.FC = () => {
 
               <div className="pt-8 border-t border-stone-100 text-center">
                 <p className="text-xs text-stone-400">
-                  Igreja Presbiteriana Central · Vivendo o Evangelho da Graça
+                  {churchInfo.name || 'Igreja'}{churchInfo.tagline ? ` · ${churchInfo.tagline}` : ''}
                 </p>
               </div>
             </div>

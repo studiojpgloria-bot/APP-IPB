@@ -3,7 +3,42 @@ import { Church, Instagram, Lock, Mail, MapPin, Phone, ShieldCheck, Youtube } fr
 import { useChurch } from '../../context/ChurchContext';
 
 export const Footer: React.FC = () => {
-  const { churchInfo, setCurrentView, isManagerAuthenticated, isMobileAppPreview } = useChurch();
+  const {
+    currentView,
+    activeChurch,
+    platformSettings,
+    churchInfo,
+    setCurrentView,
+    switchChurch,
+    isManagerAuthenticated,
+    isMobileAppPreview
+  } = useChurch();
+
+  const isPlatformFooterMode =
+    currentView === 'manager' || currentView === 'admin' || !activeChurch;
+
+  if (isPlatformFooterMode) {
+    return (
+      <footer className="bg-white border-t border-stone-200 py-6 px-4 sm:px-6 text-xs text-stone-500">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+          <span>
+            © {new Date().getFullYear()} {platformSettings.appName || 'Minha Igreja'}. Plataforma digital multi-igreja.
+          </span>
+          <button
+            type="button"
+            onClick={switchChurch}
+            className="text-stone-600 hover:text-stone-900 font-semibold flex items-center gap-1.5"
+          >
+            <Church className="w-3.5 h-3.5 text-[#344E41]" />
+            <span>Ir para a Tela Inicial (/)</span>
+          </button>
+        </div>
+      </footer>
+    );
+  }
+
+  const displayChurchName = activeChurch.name || churchInfo.name || platformSettings.appName || 'Minha Igreja';
+  const displayChurchLogo = activeChurch.logoUrl || churchInfo.logoUrl;
 
   return (
     <footer
@@ -20,23 +55,42 @@ export const Footer: React.FC = () => {
           {/* Col 1: About & Logo */}
           <div className={`${isMobileAppPreview ? '' : 'md:col-span-2'} space-y-4`}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#4A6B5D] flex items-center justify-center text-white font-serif font-bold text-lg shrink-0 overflow-hidden">
-                {churchInfo.logoUrl ? (
-                  <img src={churchInfo.logoUrl} alt={churchInfo.name} className="w-full h-full object-cover" />
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-serif font-bold text-lg shrink-0 overflow-hidden"
+                style={{ backgroundColor: activeChurch.themeColor || '#4A6B5D' }}
+              >
+                {displayChurchLogo ? (
+                  <img
+                    src={displayChurchLogo}
+                    alt={displayChurchName}
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
                   <Church className="w-5 h-5 text-stone-100" />
                 )}
               </div>
               <div className="min-w-0">
                 <h3 className="text-white font-semibold text-base sm:text-lg tracking-tight truncate">
-                  {churchInfo.name}
+                  {displayChurchName}
                 </h3>
-                <p className="text-stone-400 text-xs truncate">{churchInfo.tagline}</p>
+                {churchInfo.tagline && (
+                  <p className="text-stone-400 text-xs truncate">{churchInfo.tagline}</p>
+                )}
               </div>
             </div>
-            <p className="text-stone-400 text-xs sm:text-sm leading-relaxed max-w-md">
-              {churchInfo.aboutHistory.slice(0, 190)}...
-            </p>
+            {churchInfo.aboutHistory ? (
+              <p className="text-stone-400 text-xs sm:text-sm leading-relaxed max-w-md">
+                {churchInfo.aboutHistory.length > 190
+                  ? `${churchInfo.aboutHistory.slice(0, 190)}...`
+                  : churchInfo.aboutHistory}
+              </p>
+            ) : (
+              <p className="text-stone-500 text-xs leading-relaxed max-w-md">
+                {activeChurch.city && activeChurch.state
+                  ? `${activeChurch.city} — ${activeChurch.state}`
+                  : ''}
+              </p>
+            )}
             <div className="flex items-center gap-3 pt-1">
               {churchInfo.instagramUrl && (
                 <a
@@ -62,7 +116,7 @@ export const Footer: React.FC = () => {
               )}
               {churchInfo.whatsappNumber && (
                 <a
-                  href={`https://wa.me/${churchInfo.whatsappNumber}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage)}`}
+                  href={`https://wa.me/${churchInfo.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage || '')}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-9 h-9 rounded-full bg-emerald-950/80 hover:bg-emerald-900 flex items-center justify-center text-emerald-400 hover:text-emerald-300 transition-colors"
@@ -77,43 +131,61 @@ export const Footer: React.FC = () => {
           {/* Col 2: Cultos e Horários */}
           <div className="space-y-3">
             <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
-              Cultos & Encontros
+              Cultos &amp; Encontros
             </h4>
-            <ul className="space-y-2 text-xs text-stone-400">
-              {churchInfo.schedules.slice(0, 4).map((sch) => (
-                <li key={sch.id} className="flex flex-col">
-                  <span className="font-semibold text-stone-200">
-                    {sch.day} · {sch.time}
-                  </span>
-                  <span className="text-stone-400 text-[11px]">{sch.title}</span>
-                </li>
-              ))}
-            </ul>
+            {churchInfo.schedules.length > 0 ? (
+              <ul className="space-y-2 text-xs text-stone-400">
+                {churchInfo.schedules.slice(0, 4).map((sch) => (
+                  <li key={sch.id} className="flex flex-col">
+                    <span className="font-semibold text-stone-200">
+                      {sch.day} · {sch.time}
+                    </span>
+                    <span className="text-stone-400 text-[11px]">{sch.title}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-stone-500 italic">Nenhum horário cadastrado ainda.</p>
+            )}
           </div>
 
           {/* Col 3: Contato & Endereço */}
           <div className="space-y-3">
             <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
-              Endereço & Contato
+              Endereço &amp; Contato
             </h4>
-            <div className="space-y-2 text-xs text-stone-400">
-              <p className="flex items-start gap-2">
-                <MapPin className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                <span>
-                  {churchInfo.address}
-                  <br />
-                  {churchInfo.cityStateZip}
-                </span>
-              </p>
-              <p className="flex items-center gap-2">
-                <Phone className="w-4 h-4 text-stone-500 shrink-0" />
-                <span>{churchInfo.primaryPhone}</span>
-              </p>
-              <p className="flex items-center gap-2 break-all">
-                <Mail className="w-4 h-4 text-stone-500 shrink-0" />
-                <span>{churchInfo.email}</span>
-              </p>
-            </div>
+            {churchInfo.address || churchInfo.primaryPhone || churchInfo.email ? (
+              <div className="space-y-2 text-xs text-stone-400">
+                {(churchInfo.address || churchInfo.cityStateZip) && (
+                  <p className="flex items-start gap-2">
+                    <MapPin className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                    <span>
+                      {churchInfo.address}
+                      {churchInfo.cityStateZip && (
+                        <>
+                          <br />
+                          {churchInfo.cityStateZip}
+                        </>
+                      )}
+                    </span>
+                  </p>
+                )}
+                {churchInfo.primaryPhone && (
+                  <p className="flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-stone-500 shrink-0" />
+                    <span>{churchInfo.primaryPhone}</span>
+                  </p>
+                )}
+                {churchInfo.email && (
+                  <p className="flex items-center gap-2 break-all">
+                    <Mail className="w-4 h-4 text-stone-500 shrink-0" />
+                    <span>{churchInfo.email}</span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-stone-500 italic">Endereço e contato não configurados.</p>
+            )}
           </div>
         </div>
 
@@ -126,11 +198,21 @@ export const Footer: React.FC = () => {
           }`}
         >
           <div className="flex items-center gap-1.5">
-            <span>© {new Date().getFullYear()} {churchInfo.name}. Todos os direitos reservados.</span>
+            <span>
+              © {new Date().getFullYear()} {displayChurchName} — {platformSettings.appName || 'Minha Igreja'}
+            </span>
           </div>
 
-          {/* Discreet Manager Button */}
-          <div>
+          <div className="flex items-center gap-2 flex-wrap justify-center">
+            <button
+              onClick={switchChurch}
+              className="inline-flex items-center gap-1.5 text-stone-400 hover:text-stone-200 transition-colors py-1.5 px-3 rounded-lg hover:bg-stone-800 focus-visible:outline-none"
+              title="Voltar para o diretório e escolher outra igreja"
+            >
+              <Church className="w-3.5 h-3.5" />
+              <span>Trocar de igreja</span>
+            </button>
+
             <button
               onClick={() => {
                 setCurrentView('manager');

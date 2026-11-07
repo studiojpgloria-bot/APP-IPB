@@ -1,4 +1,4 @@
-import { BibleBook, BibleVerse } from '../types';
+import { BibleBook } from '../types';
 
 export const BIBLE_BOOKS: BibleBook[] = [
   // Antigo Testamento
@@ -72,160 +72,283 @@ export const BIBLE_BOOKS: BibleBook[] = [
   { id: 'ap', abbrev: 'ap', name: 'Apocalipse', testament: 'NT', chaptersCount: 22, group: 'Profecia' }
 ];
 
-// Rich curated texts for standard offline display & testing
-export const FAMOUS_CHAPTERS: Record<string, BibleVerse[]> = {
-  'sl-23': [
-    { number: 1, text: 'O Senhor é o meu pastor; nada me faltará.' },
-    { number: 2, text: 'Ele me faz repousar em pastos verdejantes; conduz-me mansamente a águas mansas e tranquilas.' },
-    { number: 3, text: 'Restaura a minha alma; guia-me pelas veredas da justiça por amor do seu nome.' },
-    { number: 4, text: 'Ainda que eu ande pelo vale da sombra da morte, não temerei mal algum, porque tu estás comigo; a tua vara e o teu cajado me consolam.' },
-    { number: 5, text: 'Preparas uma mesa perante mim na presença dos meus adversários, unges a minha cabeça com óleo, o meu cálice transborda.' },
-    { number: 6, text: 'Certamente que a bondade e a misericórdia me seguirão todos os dias da minha vida; e habitarei na Casa do Senhor por longos dias.' }
-  ],
-  'sl-91': [
-    { number: 1, text: 'Aquele que habita no esconderijo do Altíssimo, à sombra do Onipotente descansará.' },
-    { number: 2, text: 'Direi do Senhor: Ele é o meu Deus, o meu refúgio, a minha fortaleza, e nele confiarei.' },
-    { number: 3, text: 'Porque ele te livrará do laço do passarinheiro e da peste perniciosa.' },
-    { number: 4, text: 'Ele te cobrirá com as suas penas, e debaixo das suas asas te confiarás; a sua verdade será o teu escudo e broquel.' },
-    { number: 5, text: 'Não terás medo do terror de noite nem da seta que voa de dia.' },
-    { number: 6, text: 'Nem da peste que anda na escuridão, nem da mortandade que assola ao meio-dia.' },
-    { number: 7, text: 'Mil cairão ao teu lado, e dez mil à tua direita, mas não chegará a ti.' },
-    { number: 8, text: 'Somente com os teus olhos contemplarás e verás a recompensa dos ímpios.' },
-    { number: 9, text: 'Porque tu, ó Senhor, és o meu refúgio! No Altíssimo fizeste a tua habitação.' },
-    { number: 10, text: 'Nenhum mal te sucederá, nem praga alguma chegará à tua tenda.' },
-    { number: 11, text: 'Porque aos seus anjos dará ordem a teu respeito, para te guardarem em todos os teus caminhos.' },
-    { number: 12, text: 'Eles te sustentarão nas suas mãos, para que não tropeces com o teu pé em pedra.' }
-  ],
-  'sl-121': [
-    { number: 1, text: 'Elevo os meus olhos para os montes: de onde me virá o socorro?' },
-    { number: 2, text: 'O meu socorro vem do Senhor, que fez os céus e a terra.' },
-    { number: 3, text: 'Ele não permitirá que os teus pés vacilem; não dormitará aquele que te guarda.' },
-    { number: 4, text: 'É certo que não dormita, nem dorme o guarda de Israel.' },
-    { number: 5, text: 'O Senhor é quem te guarda; o Senhor é a tua sombra à tua direita.' },
-    { number: 6, text: 'De dia não te molestará o sol, nem de noite, a lua.' },
-    { number: 7, text: 'O Senhor te guardará de todo mal; guardará a tua alma.' },
-    { number: 8, text: 'O Senhor guardará a tua saída e a tua entrada, desde agora e para todo o sempre.' }
-  ],
-  'sl-1': [
-    { number: 1, text: 'Bem-aventurado o homem que não anda segundo o conselho dos ímpios, nem se detém no caminho dos pecadores, nem se assenta na roda dos escarnecedores.' },
-    { number: 2, text: 'Antes, tem o seu prazer na lei do Senhor, e na sua lei medita de dia e de noite.' },
-    { number: 3, text: 'Ele é como a árvore plantada junto a correntes de águas, que dá o seu fruto na estação própria, e cujas folhas não caem; e tudo quanto fizer prosperará.' },
-    { number: 4, text: 'Não são assim os ímpios; são, porém, como a palha que o vento dispersa.' },
-    { number: 5, text: 'Por isso os ímpios não subsistirão no juízo, nem os pecadores na congregação dos justos.' },
-    { number: 6, text: 'Pois o Senhor conhece o caminho dos justos, mas o caminho dos ímpios perecerá.' }
-  ],
-  'jo-1': [
-    { number: 1, text: 'No princípio era o Verbo, e o Verbo estava com Deus, e o Verbo era Deus.' },
-    { number: 2, text: 'Ele estava no princípio com Deus.' },
-    { number: 3, text: 'Todas as coisas foram feitas por meio dele, e sem ele nada do que foi feito se fez.' },
-    { number: 4, text: 'Nele estava a vida, e a vida era a luz dos homens.' },
-    { number: 5, text: 'A luz resplandece nas trevas, e as trevas não a prevaleceram.' },
-    { number: 12, text: 'Mas, a todos quantos o receberam, deu-lhes o poder de serem feitos filhos de Deus, a saber, aos que creem no seu nome;' },
-    { number: 14, text: 'E o Verbo se fez carne e habitou entre nós, cheio de graça e de verdade, e vimos a sua glória, glória como do unigênito do Pai.' }
-  ],
-  'jo-3': [
-    { number: 16, text: 'Porque Deus amou o mundo de tal maneira que deu o seu Filho unigênito, para que todo aquele que nele crê não pereça, mas tenha a vida eterna.' },
-    { number: 17, text: 'Porque Deus enviou o seu Filho ao mundo, não para que condenasse o mundo, mas para que o mundo fosse salvo por ele.' },
-    { number: 18, text: 'Quem nele crê não é condenado; mas o que não crê já está condenado, porquanto não crê no nome do unigênito Filho de Deus.' }
-  ],
-  'rm-8': [
-    { number: 1, text: 'Portanto, agora nenhuma condenação há para os que estão em Cristo Jesus, que não andam segundo a carne, mas segundo o Espírito.' },
-    { number: 28, text: 'Sabemos que todas as coisas cooperam para o bem daqueles que amam a Deus, daqueles que são chamados segundo o seu propósito.' },
-    { number: 31, text: 'Que diremos, pois, diante destas coisas? Se Deus é por nós, quem será contra nós?' },
-    { number: 35, text: 'Quem nos separará do amor de Cristo? Será a tribulação, ou a angústia, ou a perseguição, ou a fome, ou a nudez, ou o perigo, ou a espada?' },
-    { number: 37, text: 'Mas em todas estas coisas somos mais do que vencedores, por meio daquele que nos amou.' },
-    { number: 38, text: 'Porque estou bem certo de que nem a morte, nem a vida, nem os anjos, nem os principados, nem o presente, nem o porvir, nem as potestades,' },
-    { number: 39, text: 'nem a altura, nem a profundidade, nem qualquer outra criatura poderá nos separar do amor de Deus, que está em Cristo Jesus nosso Senhor.' }
-  ],
-  '1co-13': [
-    { number: 1, text: 'Ainda que eu fale as línguas dos homens e dos anjos, se não tiver amor, serei como o bronze que soa ou como o címbalo que retine.' },
-    { number: 4, text: 'O amor é paciente, é benigno; o amor não arde em ciúmes, não se ufana, não se ensoberbece.' },
-    { number: 7, text: 'Tudo sofre, tudo crê, tudo espera, tudo suporta.' },
-    { number: 8, text: 'O amor jamais acaba.' },
-    { number: 13, text: 'Agora, pois, permanecem a fé, a esperança e o amor, estes três; porém o maior destes é o amor.' }
-  ],
-  'fp-4': [
-    { number: 4, text: 'Alegrai-vos sempre no Senhor; outra vez digo: alegrai-vos.' },
-    { number: 6, text: 'Não andeis ansiosos de coisa alguma; em tudo, porém, sejam conhecidas diante de Deus as vossas petições, pela oração e pela súplica, com ações de graças.' },
-    { number: 7, text: 'E a paz de Deus, que excede todo o entendimento, guardará os vossos corações e os vossos sentimentos em Cristo Jesus.' },
-    { number: 13, text: 'Tudo posso naquele que me fortalece.' },
-    { number: 19, text: 'E o meu Deus, segundo a sua riqueza em glória, há de suprir em Cristo Jesus cada uma das vossas necessidades.' }
-  ]
-};
-
-// Generates fallback graceful verses for any book/chapter
-export function getFallbackChapterVerses(bookAbbrev: string, chapter: number): BibleVerse[] {
-  const key = `${bookAbbrev.toLowerCase()}-${chapter}`;
-  if (FAMOUS_CHAPTERS[key]) {
-    return FAMOUS_CHAPTERS[key];
-  }
-
-  const book = BIBLE_BOOKS.find(b => b.abbrev.toLowerCase() === bookAbbrev.toLowerCase());
-  const bookName = book ? book.name : bookAbbrev;
-
-  // Generate 8-15 verses with meaningful biblical affirmations and psalm-like wisdom
-  const sampleSentences = [
-    `No livro de ${bookName}, capítulo ${chapter}, a Palavra do Senhor nos instrui a guardar Seus mandamentos de todo o coração.`,
-    'Bendize, ó minha alma, ao Senhor, e tudo o que há em mim bendiga o Seu santo nome.',
-    'Lâmpada para os meus pés é a Tua palavra, e luz para o meu caminho em tempos de escuridão.',
-    'Confia no Senhor de todo o teu coração e não te estribes no teu próprio entendimento.',
-    'O Senhor é a minha luz e a minha salvação; de quem terei medo? O Senhor é a fortaleza da minha vida.',
-    'Buscai em primeiro lugar o Reino de Deus e a Sua justiça, e todas as demais coisas vos serão acrescentadas.',
-    'Porque o Senhor é bom, a Sua misericórdia dura para sempre, e a Sua fidelidade de geração em geração.',
-    'Vinde a mim, todos os que estais cansados e sobrecarregados, e Eu vos aliviarei.',
-    'Sede fortes e corajosos; não temais, nem vos espanteis, porque o Senhor vosso Deus é convosco por onde quer que andardes.',
-    'Provai e vede que o Senhor é bom; bem-aventurado o homem que Nele se refugia.'
-  ];
-
-  return sampleSentences.map((sentence, idx) => ({
-    number: idx + 1,
-    text: sentence
-  }));
-}
-
-export function searchBibleVerses(query: string): Array<{
+export interface BibleSearchResult {
   reference: string;
   bookAbbrev: string;
   bookName: string;
   chapter: number;
   verse: number;
   text: string;
-}> {
-  if (!query || query.trim().length < 2) return [];
-  const q = query.toLowerCase().trim();
-  const results: Array<{
-    reference: string;
-    bookAbbrev: string;
-    bookName: string;
-    chapter: number;
-    verse: number;
-    text: string;
-  }> = [];
+}
 
-  // Search through all famous chapters
-  for (const [key, verses] of Object.entries(FAMOUS_CHAPTERS)) {
-    const [abbrev, chStr] = key.split('-');
-    const ch = parseInt(chStr, 10);
-    const book = BIBLE_BOOKS.find(b => b.abbrev === abbrev);
-    const bookName = book ? book.name : abbrev;
+export interface ParsedBibleReference {
+  book: BibleBook;
+  chapter: number;
+  verse?: number;
+}
 
-    for (const v of verses) {
-      if (
-        v.text.toLowerCase().includes(q) ||
-        `${bookName} ${ch}:${v.number}`.toLowerCase().includes(q) ||
-        `${abbrev} ${ch}:${v.number}`.toLowerCase().includes(q)
-      ) {
-        results.push({
-          reference: `${bookName} ${ch}:${v.number}`,
-          bookAbbrev: abbrev,
-          bookName,
-          chapter: ch,
-          verse: v.number,
-          text: v.text
-        });
-      }
+export function normalizeBibleString(str: string): string {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+const BOOK_SYNONYMS: Record<string, string> = {
+  gen: 'gn',
+  genesis: 'gn',
+  exo: 'ex',
+  exodo: 'ex',
+  lev: 'lv',
+  levitico: 'lv',
+  num: 'nm',
+  numeros: 'nm',
+  deu: 'dt',
+  deut: 'dt',
+  deuteronomio: 'dt',
+  jos: 'js',
+  josue: 'js',
+  jui: 'jz',
+  juizes: 'jz',
+  rut: 'rt',
+  rute: 'rt',
+  '1sam': '1sm',
+  '1samuel': '1sm',
+  '1 samuel': '1sm',
+  '1 sm': '1sm',
+  '2sam': '2sm',
+  '2samuel': '2sm',
+  '2 samuel': '2sm',
+  '2 sm': '2sm',
+  '1re': '1rs',
+  '1reis': '1rs',
+  '1 reis': '1rs',
+  '1 rs': '1rs',
+  '2re': '2rs',
+  '2reis': '2rs',
+  '2 reis': '2rs',
+  '2 rs': '2rs',
+  '1cro': '1cr',
+  '1cronicas': '1cr',
+  '1 cronicas': '1cr',
+  '1 cr': '1cr',
+  '2cro': '2cr',
+  '2cronicas': '2cr',
+  '2 cronicas': '2cr',
+  '2 cr': '2cr',
+  esd: 'ed',
+  esdras: 'ed',
+  nee: 'ne',
+  neemias: 'ne',
+  est: 'et',
+  ester: 'et',
+  job: 'job',
+  sal: 'sl',
+  salmo: 'sl',
+  salmos: 'sl',
+  pro: 'pv',
+  prov: 'pv',
+  proverbios: 'pv',
+  ecl: 'ec',
+  eclesiastes: 'ec',
+  can: 'ct',
+  cantares: 'ct',
+  canticos: 'ct',
+  'cantico dos canticos': 'ct',
+  isa: 'is',
+  isaias: 'is',
+  jer: 'jr',
+  jeremias: 'jr',
+  lam: 'lm',
+  lamentacoes: 'lm',
+  'lamentacoes de jeremias': 'lm',
+  eze: 'ez',
+  ezequiel: 'ez',
+  dan: 'dn',
+  daniel: 'dn',
+  ose: 'os',
+  oseias: 'os',
+  joe: 'jl',
+  joel: 'jl',
+  amo: 'am',
+  amos: 'am',
+  oba: 'ob',
+  obadias: 'ob',
+  jon: 'jn',
+  jonas: 'jn',
+  miq: 'mq',
+  miqueias: 'mq',
+  nau: 'na',
+  naum: 'na',
+  hab: 'hc',
+  habacuque: 'hc',
+  sof: 'sf',
+  sofonias: 'sf',
+  age: 'ag',
+  ageu: 'ag',
+  zac: 'zc',
+  zacarias: 'zc',
+  mal: 'ml',
+  malaquias: 'ml',
+  mat: 'mt',
+  mateus: 'mt',
+  mar: 'mc',
+  marcos: 'mc',
+  luc: 'lc',
+  lucas: 'lc',
+  joa: 'jo',
+  joao: 'jo',
+  ato: 'at',
+  atos: 'at',
+  'atos dos apostolos': 'at',
+  rom: 'rm',
+  romanos: 'rm',
+  '1cor': '1co',
+  '1corintios': '1co',
+  '1 corintios': '1co',
+  '1 co': '1co',
+  '2cor': '2co',
+  '2corintios': '2co',
+  '2 corintios': '2co',
+  '2 co': '2co',
+  gal: 'gl',
+  galatas: 'gl',
+  efe: 'ef',
+  efesios: 'ef',
+  fil: 'fp',
+  filipenses: 'fp',
+  col: 'cl',
+  colossenses: 'cl',
+  '1tes': '1ts',
+  '1tessalonicenses': '1ts',
+  '1 tessalonicenses': '1ts',
+  '1 ts': '1ts',
+  '2tes': '2ts',
+  '2tessalonicenses': '2ts',
+  '2 tessalonicenses': '2ts',
+  '2 ts': '2ts',
+  '1tim': '1tm',
+  '1timoteo': '1tm',
+  '1 timoteo': '1tm',
+  '1 tm': '1tm',
+  '2tim': '2tm',
+  '2timoteo': '2tm',
+  '2 timoteo': '2tm',
+  '2 tm': '2tm',
+  tit: 'tt',
+  tito: 'tt',
+  flm: 'fm',
+  filemom: 'fm',
+  filemon: 'fm',
+  heb: 'hb',
+  hebreus: 'hb',
+  tia: 'tg',
+  tiago: 'tg',
+  '1ped': '1pe',
+  '1pedro': '1pe',
+  '1 pedro': '1pe',
+  '1 pe': '1pe',
+  '2ped': '2pe',
+  '2pedro': '2pe',
+  '2 pedro': '2pe',
+  '2 pe': '2pe',
+  '1joa': '1jo',
+  '1joao': '1jo',
+  '1 joao': '1jo',
+  '1 jo': '1jo',
+  '2joa': '2jo',
+  '2joao': '2jo',
+  '2 joao': '2jo',
+  '2 jo': '2jo',
+  '3joa': '3jo',
+  '3joao': '3jo',
+  '3 joao': '3jo',
+  '3 jo': '3jo',
+  jud: 'jd',
+  judas: 'jd',
+  apo: 'ap',
+  apoc: 'ap',
+  apocalipse: 'ap'
+};
+
+export function findBibleBookByQuery(rawBookName: string): BibleBook | null {
+  const trimmed = rawBookName.trim().replace(/\.$/, '');
+  if (!trimmed) return null;
+
+  // Distinguish "Jó" (with acute accent) from "Jo" (abbreviation for João)
+  if (/^j[óo]$/i.test(trimmed)) {
+    if (trimmed.toLowerCase() === 'jó') {
+      return BIBLE_BOOKS.find((b) => b.abbrev === 'job') || null;
     }
+    return BIBLE_BOOKS.find((b) => b.abbrev === 'jo') || null;
   }
 
-  return results.slice(0, 30);
+  const norm = normalizeBibleString(trimmed).replace(/\s+/g, ' ');
+  const compact = norm.replace(/\s+/g, '');
+
+  const directAbbrev = BOOK_SYNONYMS[norm] || BOOK_SYNONYMS[compact];
+  if (directAbbrev) {
+    return BIBLE_BOOKS.find((b) => b.abbrev === directAbbrev) || null;
+  }
+
+  // Exact match by abbrev or normalized name
+  const exact = BIBLE_BOOKS.find(
+    (b) =>
+      b.abbrev.toLowerCase() === compact ||
+      normalizeBibleString(b.name) === norm ||
+      normalizeBibleString(b.name).replace(/\s+/g, '') === compact
+  );
+  if (exact) return exact;
+
+  // Prefix match if at least 3 chars
+  if (norm.length >= 3) {
+    const prefixMatch = BIBLE_BOOKS.find(
+      (b) =>
+        normalizeBibleString(b.name).startsWith(norm) ||
+        normalizeBibleString(b.name).replace(/\s+/g, '').startsWith(compact)
+    );
+    if (prefixMatch) return prefixMatch;
+  }
+
+  return null;
+}
+
+/**
+ * Parses references like:
+ * - "João 3"
+ * - "João 3:16"
+ * - "Jo 3.16"
+ * - "1 Coríntios 13"
+ * - "1Co 13:4"
+ * - "Salmos 119"
+ * - "Mateus 5"
+ */
+export function parseBibleReference(query: string): ParsedBibleReference | null {
+  if (!query || !query.trim()) return null;
+  const cleaned = query.trim().replace(/\s+/g, ' ');
+
+  // Pattern: optional leading number (1, 2, 3) + book name + chapter + optional (: or . or ,) + verse
+  const match = cleaned.match(/^((?:[123]\s*)?[a-zA-ZÀ-ÿ.]+(?:\s+[a-zA-ZÀ-ÿ.]+)*)\s+(\d+)(?:[:.,](\d+))?$/);
+  if (!match) {
+    // Also support compact format like "Jo3:16" or "1Co13"
+    const compactMatch = cleaned.match(/^((?:[123]\s*)?[a-zA-ZÀ-ÿ]+)(\d+)(?:[:.,](\d+))?$/);
+    if (!compactMatch) return null;
+    const book = findBibleBookByQuery(compactMatch[1]);
+    if (!book) return null;
+    const chapter = parseInt(compactMatch[2], 10);
+    if (isNaN(chapter) || chapter < 1 || chapter > book.chaptersCount) return null;
+    const verse = compactMatch[3] ? parseInt(compactMatch[3], 10) : undefined;
+    return { book, chapter, verse };
+  }
+
+  const bookPart = match[1];
+  const chapter = parseInt(match[2], 10);
+  const verse = match[3] ? parseInt(match[3], 10) : undefined;
+
+  const book = findBibleBookByQuery(bookPart);
+  if (!book) return null;
+  if (isNaN(chapter) || chapter < 1 || chapter > book.chaptersCount) return null;
+
+  return { book, chapter, verse };
 }

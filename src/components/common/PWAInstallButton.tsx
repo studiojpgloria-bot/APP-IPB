@@ -1,23 +1,60 @@
-import React from 'react';
-import { WifiOff } from 'lucide-react';
-import { useChurch } from '../../context/ChurchContext';
-import { useOnlineStatus } from '../../hooks/usePWAInstall';
+import { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
 
-export const OfflineIndicator: React.FC = () => {
-  const isOnline = useOnlineStatus();
-  const { cacheMetadata } = useChurch();
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  readonly userChoice: Promise<{
+    outcome: 'accepted' | 'dismissed';
+    platform: string;
+  }>;
+  prompt(): Promise<void>;
+}
 
-  if (isOnline) return null;
+export function PWAInstallButton() {
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+      setIsInstallable(true);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstallable(false);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    await deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstallable(false);
+    }
+    setDeferredPrompt(null);
+  };
+
+  if (!isInstallable) return null;
 
   return (
-    <div className="fixed bottom-20 md:bottom-5 left-4 z-50 flex items-center gap-2.5 rounded-2xl bg-amber-900/95 border border-amber-700 px-4 py-2.5 text-xs font-medium text-white shadow-xl backdrop-blur-xs">
-      <WifiOff className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
-      <div>
-        <span className="font-bold block">Modo Offline Ativo</span>
-        <span className="text-[11px] text-amber-200">
-          Usando cache local ({cacheMetadata.notesCount} notas salvas no aparelho)
-        </span>
-      </div>
-    </div>
+    <button
+      onClick={handleInstallClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#344E41] text-[#FAF9F6] rounded-full text-xs font-medium shadow-xs hover:bg-[#2a3f34] transition-colors cursor-pointer"
+      title="Instalar aplicativo no dispositivo"
+    >
+      <Download className="w-3.5 h-3.5" />
+      <span>Instalar App</span>
+    </button>
   );
-};
+}

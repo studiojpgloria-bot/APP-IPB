@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AArrowDown,
   AArrowUp,
   Bookmark,
   BookOpen,
-  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -16,7 +16,6 @@ import {
   Moon,
   Plus,
   Search,
-  Share2,
   Sun,
   Trash2,
   Upload,
@@ -24,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useChurch } from '../../context/ChurchContext';
 import { BibleApiService } from '../../services/bibleApi';
-import { BIBLE_BOOKS, searchBibleVerses } from '../../services/bibleData';
+import { BIBLE_BOOKS, BibleSearchResult, parseBibleReference } from '../../services/bibleData';
 import { ChurchStorageService } from '../../services/storage';
 import { BibleBook, BibleVerse } from '../../types';
 
@@ -49,10 +48,8 @@ export const BibleView: React.FC = () => {
     favorites,
     toggleFavorite,
     isFavorite,
-    cacheMetadata,
     isMobileAppPreview,
     showToast,
-    settings,
     askConfirmation
   } = useChurch();
 
@@ -69,6 +66,7 @@ export const BibleView: React.FC = () => {
       BIBLE_BOOKS[0]
   );
   const [selectedChapter, setSelectedChapter] = useState<number>(() => initialReadingState.chapter || 23);
+  const [highlightedVerse, setHighlightedVerse] = useState<number | null>(null);
   const [testamentFilter, setTestamentFilter] = useState<'ALL' | 'VT' | 'NT'>('ALL');
   const [bookSelectorOpen, setBookSelectorOpen] = useState(false);
   const [chapterSelectorOpen, setChapterSelectorOpen] = useState(false);
@@ -79,8 +77,9 @@ export const BibleView: React.FC = () => {
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<ReturnType<typeof searchBibleVerses>>([]);
+  const [searchResults, setSearchResults] = useState<BibleSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSearchingLoading, setIsSearchingLoading] = useState(false);
 
   // Reader Customization (Font size & theme) restored from cache
   const [fontSize, setFontSize] = useState<number>(() => initialReadingState.fontSize || 18);
@@ -102,6 +101,18 @@ export const BibleView: React.FC = () => {
 
   // Search Notes query
   const [notesFilterQuery, setNotesFilterQuery] = useState('');
+
+  // Pre-warm full Bible in background for instant offline reading & search
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem('ipc_bible_chapters_cache_v1');
+    } catch {
+      // ignore
+    }
+    void BibleApiService.loadFullBible().catch(() => {
+      // ignore background prewarm errors
+    });
+  }, []);
 
   // Persist reading state (book, chapter, fontSize, theme) automatically to cache
   useEffect(() => {
@@ -135,17 +146,63 @@ export const BibleView: React.FC = () => {
     };
   }, [selectedBook.abbrev, selectedChapter]);
 
-  // Handle Search
-  const handleExecuteSearch = (e?: React.FormEvent) => {
+  // Scroll to highlighted verse after verses load
+  useEffect(() => {
+    if (!isLoadingVerses && highlightedVerse !== null && verses.length > 0) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`bible-verse-${highlightedVerse}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoadingVerses, highlightedVerse, verses.length]);
+
+  // Handle Search (supports direct reference jump or full-Bible keyword search up to 100 results)
+  const handleExecuteSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!searchQuery.trim()) {
+    const raw = searchQuery.trim();
+    if (!raw) {
       setSearchResults([]);
       setIsSearching(false);
       return;
     }
+
+    // 1. Check if query is a direct reference ("João 3", "João 3:16", "Jo 3.16", "1 Coríntios 13", "Mateus 5")
+    const parsedRef = parseBibleReference(raw);
+    if (parsedRef) {
+      setSelectedBook(parsedRef.book);
+      setSelectedChapter(parsedRef.chapter);
+      setHighlightedVerse(parsedRef.verse || null);
+      setActiveTab('read');
+      setIsSearching(false);
+      if (!parsedRef.verse) {
+        window.scrollTo({ top: 120, behavior: 'smooth' });
+      }
+      return;
+    }
+
+    // 2. Full-Bible text search across all 66 books (limited to 100 results)
     setIsSearching(true);
-    const results = searchBibleVerses(searchQuery);
-    setSearchResults(results);
+    setIsSearchingLoading(true);
+    try {
+      const { referenceMatch, results } = await BibleApiService.searchBible(raw);
+      if (referenceMatch) {
+        setSelectedBook(referenceMatch.book);
+        setSelectedChapter(referenceMatch.chapter);
+        setHighlightedVerse(referenceMatch.verse || null);
+        setActiveTab('read');
+        setIsSearching(false);
+        return;
+      }
+      setSearchResults(results);
+    } catch (err) {
+      console.error('Erro na busca bíblica:', err);
+      setSearchResults([]);
+    } finally {
+      setIsSearchingLoading(false);
+    }
   };
 
   const handleSelectSearchResult = (res: {
@@ -157,14 +214,15 @@ export const BibleView: React.FC = () => {
     if (book) {
       setSelectedBook(book);
       setSelectedChapter(res.chapter);
+      setHighlightedVerse(res.verse || null);
       setActiveTab('read');
       setIsSearching(false);
-      setSearchQuery('');
     }
   };
 
   // Chapter Navigation
   const handlePrevChapter = () => {
+    setHighlightedVerse(null);
     if (selectedChapter > 1) {
       setSelectedChapter((c) => c - 1);
     } else {
@@ -180,6 +238,7 @@ export const BibleView: React.FC = () => {
   };
 
   const handleNextChapter = () => {
+    setHighlightedVerse(null);
     if (selectedChapter < selectedBook.chaptersCount) {
       setSelectedChapter((c) => c + 1);
     } else {
@@ -314,7 +373,7 @@ export const BibleView: React.FC = () => {
               <span>Bíblia Sagrada</span>
             </h1>
             <p className="text-xs text-stone-500">
-              Tradução padrão: {settings.bibleConfig?.versionName ? settings.bibleConfig.versionName.toUpperCase() : 'Almeida Atualizada'}
+              Tradução: Almeida Corrigida Fiel (ACF) · 66 livros completos offline
             </p>
           </div>
 
@@ -422,28 +481,37 @@ export const BibleView: React.FC = () => {
         </div>
 
         {/* Global Search Bar */}
-        <form onSubmit={handleExecuteSearch} className="relative">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Pesquisar por palavra (ex: amor, fé, pastor) ou referência (ex: Salmos 23, João 3:16)..."
-            className="w-full min-h-[46px] pl-10 pr-10 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41] focus:bg-white"
-          />
-          <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('');
-                setIsSearching(false);
-                setSearchResults([]);
-              }}
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
+        <form onSubmit={handleExecuteSearch} className="relative flex items-center gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar referência (ex: João 3, João 3:16, Jo 3.16, 1 Coríntios 13) ou palavra em toda a Bíblia..."
+              className="w-full min-h-[46px] pl-10 pr-10 rounded-xl bg-stone-50 border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41] focus:bg-white"
+            />
+            <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setIsSearching(false);
+                  setSearchResults([]);
+                  setHighlightedVerse(null);
+                }}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <button
+            type="submit"
+            className="min-h-[46px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-semibold shrink-0 transition-colors"
+          >
+            Buscar
+          </button>
         </form>
       </div>
 
@@ -452,12 +520,12 @@ export const BibleView: React.FC = () => {
         <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-stone-100">
             <h3 className="font-bold text-stone-900 text-sm">
-              Resultados da Busca para &ldquo;{searchQuery}&rdquo; ({searchResults.length})
+              Resultados na Bíblia ACF para &ldquo;{searchQuery}&rdquo; ({searchResults.length}
+              {searchResults.length === 100 ? ' — exibindo os 100 primeiros' : ''})
             </h3>
             <button
               onClick={() => {
                 setIsSearching(false);
-                setSearchQuery('');
               }}
               className="text-xs text-stone-500 hover:underline"
             >
@@ -465,9 +533,14 @@ export const BibleView: React.FC = () => {
             </button>
           </div>
 
-          {searchResults.length === 0 ? (
+          {isSearchingLoading ? (
+            <div className="p-10 flex flex-col items-center justify-center gap-2 text-stone-500 text-xs">
+              <div className="w-6 h-6 rounded-full border-2 border-[#344E41] border-t-transparent animate-spin" />
+              <span>Pesquisando nos 66 livros da Bíblia Sagrada (ACF)...</span>
+            </div>
+          ) : searchResults.length === 0 ? (
             <div className="p-8 text-center text-stone-500 text-sm">
-              Nenhum versículo encontrado para este termo no catálogo de demonstração.
+              Nenhum versículo encontrado para &ldquo;{searchQuery}&rdquo; na Bíblia Almeida Corrigida Fiel (ACF).
             </div>
           ) : (
             <div className="space-y-3">
@@ -537,11 +610,16 @@ export const BibleView: React.FC = () => {
             {/* Chapter Header */}
             <div className="text-center pb-8 border-b border-stone-200/50">
               <span className="text-xs font-semibold tracking-wider uppercase opacity-70">
-                {selectedBook.group} · {selectedBook.testament === 'VT' ? 'Antigo Testamento' : 'Novo Testamento'}
+                {selectedBook.group} · {selectedBook.testament === 'VT' ? 'Antigo Testamento' : 'Novo Testamento'} · ACF
               </span>
               <h2 className="mt-1 text-2xl sm:text-3xl font-serif font-bold tracking-tight">
                 {selectedBook.name} {selectedChapter}
               </h2>
+              {!isLoadingVerses && verses.length > 0 && (
+                <span className="text-[11px] opacity-60 mt-1 inline-block">
+                  {verses.length} versículos
+                </span>
+              )}
             </div>
 
             {/* Verses Container */}
@@ -560,11 +638,20 @@ export const BibleView: React.FC = () => {
                       n.chapter === selectedChapter &&
                       n.verse === v.number
                   );
+                  const isHighlighted = highlightedVerse === v.number;
 
                   return (
                     <div
                       key={v.number}
-                      className="group relative rounded-xl p-2.5 -mx-2 hover:bg-stone-500/10 transition-colors"
+                      id={`bible-verse-${v.number}`}
+                      onClick={() => {
+                        if (isHighlighted) setHighlightedVerse(null);
+                      }}
+                      className={`group relative rounded-xl p-2.5 -mx-2 transition-colors ${
+                        isHighlighted
+                          ? 'bg-amber-200/35 ring-1 ring-amber-400/70'
+                          : 'hover:bg-stone-500/10'
+                      }`}
                     >
                       <div className="flex items-start gap-2.5">
                         <span className="font-mono text-xs font-bold opacity-45 shrink-0 mt-1 select-none w-6 text-right">
@@ -659,7 +746,7 @@ export const BibleView: React.FC = () => {
                 <span>Anterior</span>
               </button>
               <span className="text-xs font-serif italic opacity-70">
-                {selectedBook.name} {selectedChapter}
+                {selectedBook.name} {selectedChapter} · Almeida Corrigida Fiel (ACF)
               </span>
               <button
                 onClick={handleNextChapter}
@@ -837,6 +924,7 @@ export const BibleView: React.FC = () => {
                         if (book) {
                           setSelectedBook(book);
                           setSelectedChapter(note.chapter);
+                          setHighlightedVerse(note.verse || null);
                           setActiveTab('read');
                         }
                       }}
@@ -942,6 +1030,7 @@ export const BibleView: React.FC = () => {
                         if (book) {
                           setSelectedBook(book);
                           setSelectedChapter(fav.chapter);
+                          setHighlightedVerse(fav.verse || null);
                           setActiveTab('read');
                         }
                       }}
@@ -968,218 +1057,230 @@ export const BibleView: React.FC = () => {
       )}
 
       {/* MODAL: SELECIONAR LIVRO */}
-      {bookSelectorOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-stone-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-stone-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-stone-900 text-base">Selecione o Livro</h3>
-                <p className="text-xs text-stone-500">66 Livros da Bíblia Sagrada</p>
-              </div>
-              <button
-                onClick={() => setBookSelectorOpen(false)}
-                className="p-1 text-stone-400 hover:text-stone-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Filter VT / NT */}
-            <div className="flex items-center gap-2 p-3 bg-stone-50 border-b border-stone-200 text-xs">
-              <button
-                onClick={() => setTestamentFilter('ALL')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  testamentFilter === 'ALL'
-                    ? 'bg-[#344E41] text-white'
-                    : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
-                }`}
-              >
-                Todos (66)
-              </button>
-              <button
-                onClick={() => setTestamentFilter('VT')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  testamentFilter === 'VT'
-                    ? 'bg-[#344E41] text-white'
-                    : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
-                }`}
-              >
-                Antigo Testamento (39)
-              </button>
-              <button
-                onClick={() => setTestamentFilter('NT')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  testamentFilter === 'NT'
-                    ? 'bg-[#344E41] text-white'
-                    : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
-                }`}
-              >
-                Novo Testamento (27)
-              </button>
-            </div>
-
-            {/* Book Grid */}
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-              {filteredBooks.map((book) => {
-                const isSelected = book.id === selectedBook.id;
-                return (
-                  <button
-                    key={book.id}
-                    onClick={() => {
-                      setSelectedBook(book);
-                      setSelectedChapter(1);
-                      setBookSelectorOpen(false);
-                    }}
-                    className={`min-h-[44px] p-2.5 rounded-xl text-left border transition-all ${
-                      isSelected
-                        ? 'bg-[#344E41] text-white border-[#344E41] shadow-xs'
-                        : 'bg-stone-50/60 hover:bg-stone-100 text-stone-800 border-stone-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-xs leading-tight">{book.name}</span>
-                      <span className={`text-[10px] font-mono ${isSelected ? 'text-emerald-200' : 'text-stone-400'}`}>
-                        {book.chaptersCount} cap
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: SELECIONAR CAPÍTULO */}
-      {chapterSelectorOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-stone-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[85vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-stone-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-stone-900 text-base">
-                  {selectedBook.name} · Escolha o Capítulo
-                </h3>
-                <p className="text-xs text-stone-500">Total de {selectedBook.chaptersCount} capítulos</p>
-              </div>
-              <button
-                onClick={() => setChapterSelectorOpen(false)}
-                className="p-1 text-stone-400 hover:text-stone-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 sm:grid-cols-6 gap-2">
-              {Array.from({ length: selectedBook.chaptersCount }, (_, i) => i + 1).map((ch) => {
-                const isCurrent = ch === selectedChapter;
-                return (
-                  <button
-                    key={ch}
-                    onClick={() => {
-                      setSelectedChapter(ch);
-                      setChapterSelectorOpen(false);
-                    }}
-                    className={`min-h-[44px] rounded-xl font-bold text-sm flex items-center justify-center transition-all ${
-                      isCurrent
-                        ? 'bg-[#344E41] text-white shadow-xs'
-                        : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
-                    }`}
-                  >
-                    {ch}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: CRIAR / EDITAR ANOTAÇÃO PESSOAL */}
-      {noteModalOpen && noteTargetVerse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-stone-200 overflow-hidden">
-            <div className="p-4 border-b border-stone-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-stone-900 text-base">
-                  Anotação Pessoal · {noteTargetVerse.bookName} {noteTargetVerse.chapter}:{noteTargetVerse.verse}
-                </h3>
-                <p className="text-xs text-stone-500">Salva somente no seu navegador/aparelho</p>
-              </div>
-              <button
-                onClick={() => setNoteModalOpen(false)}
-                className="p-1 text-stone-400 hover:text-stone-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveNote} className="p-5 space-y-4">
-              {noteTargetVerse.verseText && (
-                <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 text-xs font-serif text-stone-700 italic">
-                  &ldquo;{noteTargetVerse.verseText}&rdquo;
+      {bookSelectorOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/60 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden">
+              <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">Selecione o Livro</h3>
+                  <p className="text-xs text-stone-500">66 Livros da Bíblia Sagrada · Almeida Corrigida Fiel (ACF)</p>
                 </div>
-              )}
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider">
-                    Sua Reflexão / Estudo
-                  </label>
-                  <span className="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Rascunho salvo em tempo real
-                  </span>
-                </div>
-                <textarea
-                  rows={4}
-                  value={noteInputText}
-                  onChange={(e) => handleNoteTextChange(e.target.value)}
-                  placeholder="Escreva o que Deus falou ao seu coração neste versículo..."
-                  required
-                  className="w-full p-3 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
-                />
+                <button
+                  onClick={() => setBookSelectorOpen(false)}
+                  className="p-1 text-stone-400 hover:text-stone-700"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Color Tag Selector */}
-              <div>
-                <span className="block text-[11px] font-bold text-stone-600 mb-1.5">Cor do Marcador:</span>
-                <div className="flex items-center gap-2">
-                  {NOTE_COLORS.map((col) => (
+              {/* Filter VT / NT */}
+              <div className="flex items-center gap-2 p-3 bg-stone-50 border-b border-stone-200 text-xs">
+                <button
+                  onClick={() => setTestamentFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+                    testamentFilter === 'ALL'
+                      ? 'bg-[#344E41] text-white'
+                      : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
+                  }`}
+                >
+                  Todos (66)
+                </button>
+                <button
+                  onClick={() => setTestamentFilter('VT')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+                    testamentFilter === 'VT'
+                      ? 'bg-[#344E41] text-white'
+                      : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
+                  }`}
+                >
+                  Antigo Testamento (39)
+                </button>
+                <button
+                  onClick={() => setTestamentFilter('NT')}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+                    testamentFilter === 'NT'
+                      ? 'bg-[#344E41] text-white'
+                      : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
+                  }`}
+                >
+                  Novo Testamento (27)
+                </button>
+              </div>
+
+              {/* Book Grid */}
+              <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {filteredBooks.map((book) => {
+                  const isSelected = book.id === selectedBook.id;
+                  return (
                     <button
-                      key={col.hex}
-                      type="button"
-                      onClick={() => setNoteColorTag(col.hex)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 border transition-all ${
-                        noteColorTag === col.hex
-                          ? 'border-stone-900 bg-stone-100 text-stone-900 shadow-2xs'
-                          : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                      key={book.id}
+                      onClick={() => {
+                        setSelectedBook(book);
+                        setSelectedChapter(1);
+                        setHighlightedVerse(null);
+                        setBookSelectorOpen(false);
+                      }}
+                      className={`min-h-[44px] p-2.5 rounded-xl text-left border transition-all ${
+                        isSelected
+                          ? 'bg-[#344E41] text-white border-[#344E41] shadow-xs'
+                          : 'bg-stone-50/60 hover:bg-stone-100 text-stone-800 border-stone-200'
                       }`}
                     >
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.hex }} />
-                      <span>{col.label}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-xs leading-tight">{book.name}</span>
+                        <span className={`text-[10px] font-mono ${isSelected ? 'text-emerald-200' : 'text-stone-400'}`}>
+                          {book.chaptersCount} cap
+                        </span>
+                      </div>
                     </button>
-                  ))}
+                  );
+                })}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* MODAL: SELECIONAR CAPÍTULO */}
+      {chapterSelectorOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/60 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl w-full max-w-lg max-h-[85vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden">
+              <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    {selectedBook.name} · Escolha o Capítulo
+                  </h3>
+                  <p className="text-xs text-stone-500">Total de {selectedBook.chaptersCount} capítulos</p>
                 </div>
+                <button
+                  onClick={() => setChapterSelectorOpen(false)}
+                  className="p-1 text-stone-400 hover:text-stone-700"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
+              <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 sm:grid-cols-6 gap-2">
+                {Array.from({ length: selectedBook.chaptersCount }, (_, i) => i + 1).map((ch) => {
+                  const isCurrent = ch === selectedChapter;
+                  return (
+                    <button
+                      key={ch}
+                      onClick={() => {
+                        setSelectedChapter(ch);
+                        setHighlightedVerse(null);
+                        setChapterSelectorOpen(false);
+                      }}
+                      className={`min-h-[44px] rounded-xl font-bold text-sm flex items-center justify-center transition-all ${
+                        isCurrent
+                          ? 'bg-[#344E41] text-white shadow-xs'
+                          : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+                      }`}
+                    >
+                      {ch}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* MODAL: CRIAR / EDITAR ANOTAÇÃO PESSOAL */}
+      {noteModalOpen &&
+        noteTargetVerse &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-stone-200 overflow-hidden">
+              <div className="p-4 border-b border-stone-200 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    Anotação Pessoal · {noteTargetVerse.bookName} {noteTargetVerse.chapter}:{noteTargetVerse.verse}
+                  </h3>
+                  <p className="text-xs text-stone-500">Salva somente no seu navegador/aparelho</p>
+                </div>
                 <button
-                  type="button"
                   onClick={() => setNoteModalOpen(false)}
-                  className="min-h-[44px] px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                  className="p-1 text-stone-400 hover:text-stone-700"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-[44px] px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
-                >
-                  Salvar no Aparelho
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+
+              <form onSubmit={handleSaveNote} className="p-5 space-y-4">
+                {noteTargetVerse.verseText && (
+                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 text-xs font-serif text-stone-700 italic">
+                    &ldquo;{noteTargetVerse.verseText}&rdquo;
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider">
+                      Sua Reflexão / Estudo
+                    </label>
+                    <span className="text-[10px] text-emerald-700 font-medium flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Rascunho salvo em tempo real
+                    </span>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={noteInputText}
+                    onChange={(e) => handleNoteTextChange(e.target.value)}
+                    placeholder="Escreva o que Deus falou ao seu coração neste versículo..."
+                    required
+                    className="w-full p-3 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
+                  />
+                </div>
+
+                {/* Color Tag Selector */}
+                <div>
+                  <span className="block text-[11px] font-bold text-stone-600 mb-1.5">Cor do Marcador:</span>
+                  <div className="flex items-center gap-2">
+                    {NOTE_COLORS.map((col) => (
+                      <button
+                        key={col.hex}
+                        type="button"
+                        onClick={() => setNoteColorTag(col.hex)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 border transition-all ${
+                          noteColorTag === col.hex
+                            ? 'border-stone-900 bg-stone-100 text-stone-900 shadow-2xs'
+                            : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                        }`}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.hex }} />
+                        <span>{col.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setNoteModalOpen(false)}
+                    className="min-h-[44px] px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="min-h-[44px] px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
+                  >
+                    Salvar no Aparelho
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

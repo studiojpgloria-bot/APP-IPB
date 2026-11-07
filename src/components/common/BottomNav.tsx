@@ -4,11 +4,21 @@ import { useChurch } from '../../context/ChurchContext';
 import { ViewMode } from '../../types';
 
 export const BottomNav: React.FC = () => {
-  const { currentView, setCurrentView, isMobileAppPreview, notes } = useChurch();
+  const { currentView, setCurrentView, activeChurch, isMobileAppPreview, notes } = useChurch();
+
+  // Never show member church bottom navigation in Portal do Gestor, /admin, or when no church is selected
+  if (currentView === 'manager' || currentView === 'admin' || !activeChurch) {
+    return null;
+  }
 
   const tabs: { id: ViewMode; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'home', label: 'Início', icon: <Home className="w-5 h-5" /> },
-    { id: 'bible', label: 'Bíblia', icon: <BookOpen className="w-5 h-5" />, badge: notes.length > 0 ? notes.length : undefined },
+    {
+      id: 'bible',
+      label: 'Bíblia',
+      icon: <BookOpen className="w-5 h-5" />,
+      badge: notes.length > 0 ? notes.length : undefined
+    },
     { id: 'bulletins', label: 'Boletim', icon: <FileText className="w-5 h-5" /> },
     { id: 'deacons', label: 'Escala', icon: <ClipboardList className="w-5 h-5" /> },
     { id: 'birthdays', label: 'Aniversários', icon: <Calendar className="w-5 h-5" /> },
@@ -28,7 +38,10 @@ export const BottomNav: React.FC = () => {
           : 'fixed bottom-0 left-0 right-0 z-40 lg:hidden'
       } bg-white/95 backdrop-blur-md border-t border-stone-200 shadow-lg`}
     >
-      <nav className="grid grid-cols-6 h-16 max-w-lg mx-auto px-1 items-center" aria-label="Navegação inferior móvel">
+      <nav
+        className="grid grid-cols-6 h-16 max-w-lg mx-auto px-1 items-center"
+        aria-label="Navegação inferior móvel"
+      >
         {tabs.map((tab) => {
           const isActive = currentView === tab.id;
           return (
@@ -55,7 +68,11 @@ export const BottomNav: React.FC = () => {
                   <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-[#344E41] rounded-full" />
                 )}
               </div>
-              <span className={`text-[10px] tracking-tight mt-1 font-medium truncate max-w-full px-0.5 ${isActive ? 'font-semibold text-[#344E41]' : ''}`}>
+              <span
+                className={`text-[10px] tracking-tight mt-1 font-medium truncate max-w-full px-0.5 ${
+                  isActive ? 'font-semibold text-[#344E41]' : ''
+                }`}
+              >
                 {tab.label}
               </span>
             </button>

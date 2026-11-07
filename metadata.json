@@ -1,6 +1,8 @@
 {
-  "name": "Igreja Presbiteriana Central",
-  "description": "Aplicativo web responsivo para membros e visitantes da Igreja Presbiteriana Central, com Bíblia, boletins, aniversariantes, avisos e painel do gestor.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "name": "Minha Igreja — Plataforma Digital Multi-Igreja",
+  "description": "Plataforma digital multi-igreja com Bíblia Sagrada ACF offline, anotações pessoais no aparelho, boletins semanais, escala diaconal, aniversariantes e painel do gestor.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": []
 }

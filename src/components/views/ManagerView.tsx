@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import QRCode from 'qrcode';
 import {
   AlertCircle,
-  Calendar,
+  ArrowLeft,
   CalendarHeart,
   Check,
-  CheckCircle2,
   Church,
   ClipboardList,
   Clock,
   Copy,
-  BookOpen,
   Download,
   Edit2,
   ExternalLink,
@@ -20,17 +19,23 @@ import {
   Image as ImageIcon,
   Key,
   Layers,
-  Link as LinkIcon,
   Lock,
   LogOut,
   Mail,
+  MapPin,
+  MessageCircle,
+  Navigation,
+  Palette,
   Plus,
+  Printer,
+  QrCode,
   RefreshCw,
   Save,
-  Search,
   Settings,
+  Share2,
   Shield,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
   UserPlus,
@@ -39,6 +44,7 @@ import {
 } from 'lucide-react';
 import { activeFirebaseConfig } from '../../config/firebase';
 import { useChurch } from '../../context/ChurchContext';
+import { slugifyChurchName } from '../../services/cloudDatabase';
 import { ChurchStorageService } from '../../services/storage';
 import {
   Banner,
@@ -55,25 +61,48 @@ import { CATEGORY_META } from './DeaconScheduleView';
 
 type ManagerTab = 'info' | 'bulletins' | 'deacons' | 'birthdays' | 'banners' | 'team' | 'settings';
 
+const PRESET_THEME_COLORS = [
+  { name: 'Verde Presbiteriano', hex: '#344E41' },
+  { name: 'Azul Marinho Clássico', hex: '#1E3A8A' },
+  { name: 'Vinho Reforma', hex: '#7F1D1D' },
+  { name: 'Esmeralda Profundo', hex: '#065F46' },
+  { name: 'Âmbar Dourado', hex: '#78350F' },
+  { name: 'Grafite Sóbrio', hex: '#1F2937' }
+];
+
 export const ManagerView: React.FC = () => {
   const {
     isManagerAuthenticated,
+    isEmailVerified,
     firebaseUser,
-    currentManagerAccount,
-    churchRegistry,
-    allManagers,
-    isPrimaryOwner,
+    platformUser,
+    activeChurch,
+    managedChurches,
+    currentUserTeamRole,
+    isChurchAdmin,
+    isCreatingAdditionalChurch,
+    setIsCreatingAdditionalChurch,
+    selectChurchBySlug,
+    needsChurchOnboarding,
+    createNewChurchInCloud,
+    updateChurchSlugAndMeta,
+    inviteTeamMemberByEmail,
+    updateTeamMemberRoleByEmail,
+    removeCoManagerEmail,
+    isPlatformOwner,
     isCloudSynced,
     loginWithGoogleCloud,
     registerManagerWithEmailCloud,
     loginManagerWithEmailCloud,
-    approveOrRevokeManager,
-    removePendingManager,
+    resendEmailVerification,
+    checkEmailVerificationNow,
     syncLocalDataToCloud,
     pullLatestFromCloud,
+    resetAllChurchContentToBlank,
     importFullChurchBackup,
-    managerLogin,
     managerLogout,
+    switchChurch,
+    setCurrentView,
     churchInfo,
     updateChurchInfo,
     bulletins,
@@ -97,18 +126,15 @@ export const ManagerView: React.FC = () => {
     deleteBanner,
     toggleBannerActive,
     settings,
-    updateSettings,
     askConfirmation,
     showToast
   } = useChurch();
 
-  // Active Tab
   const [activeTab, setActiveTab] = useState<ManagerTab>('info');
 
   // Login / Register Form State
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authName, setAuthName] = useState('');
-  const [authChurchName, setAuthChurchName] = useState(churchInfo.name);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -116,8 +142,49 @@ export const ManagerView: React.FC = () => {
   const [showVercelGuideOnLogin, setShowVercelGuideOnLogin] = useState(false);
   const [copiedEnvVars, setCopiedEnvVars] = useState(false);
 
+  // Onboarding Wizard State (for newly registered managers creating their church)
+  const [wizName, setWizName] = useState('');
+  const [wizSlug, setWizSlug] = useState('');
+  const [wizSlugManuallyEdited, setWizSlugManuallyEdited] = useState(false);
+  const [wizLogoUrl, setWizLogoUrl] = useState('');
+  const [wizThemeColor, setWizThemeColor] = useState('#344E41');
+  const [wizCity, setWizCity] = useState('');
+  const [wizState, setWizState] = useState('');
+  const [wizAddress, setWizAddress] = useState('');
+  const [wizLat, setWizLat] = useState<number | undefined>(undefined);
+  const [wizLng, setWizLng] = useState<number | undefined>(undefined);
+  const [wizPhone, setWizPhone] = useState('');
+  const [wizWhatsapp, setWizWhatsapp] = useState('');
+  const [wizInstagram, setWizInstagram] = useState('');
+  const [wizYoutube, setWizYoutube] = useState('');
+  const [wizFacebook, setWizFacebook] = useState('');
+  const [wizTagline, setWizTagline] = useState('');
+  const [wizSchedules, setWizSchedules] = useState<ScheduleItem[]>([]);
+  const [wizSchDay, setWizSchDay] = useState('Domingo');
+  const [wizSchTime, setWizSchTime] = useState('19h00');
+  const [wizSchTitle, setWizSchTitle] = useState('');
+  const [wizSubmitting, setWizSubmitting] = useState(false);
+
+  // QR Code & Share Link State
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [copiedShareLink, setCopiedShareLink] = useState(false);
+
+  // Church Slug / City / Theme Edit State inside Info Tab
+  const [slugInput, setSlugInput] = useState(activeChurch?.slug || '');
+  const [cityInput, setCityInput] = useState(activeChurch?.city || '');
+  const [stateInput, setStateInput] = useState(activeChurch?.state || '');
+  const [themeColorInput, setThemeColorInput] = useState(activeChurch?.themeColor || '#344E41');
+  const [latInput, setLatInput] = useState<number | undefined>(activeChurch?.latitude);
+  const [lngInput, setLngInput] = useState<number | undefined>(activeChurch?.longitude);
+
+  // Team Member Invite Email & Role State
+  const [inviteEmailInput, setInviteEmailInput] = useState('');
+  const [inviteRoleInput, setInviteRoleInput] = useState<'admin' | 'editor'>('editor');
+  const [invitingManager, setInvitingManager] = useState(false);
+
   // --- Church Info Form State ---
   const [infoForm, setInfoForm] = useState<ChurchInfo>(churchInfo);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [newSchedule, setNewSchedule] = useState<Partial<ScheduleItem>>({
     day: 'Domingo',
     time: '19h00',
@@ -125,6 +192,7 @@ export const ManagerView: React.FC = () => {
     description: '',
     location: 'Templo Principal'
   });
+  const [editingLeaderId, setEditingLeaderId] = useState<string | null>(null);
   const [newLeader, setNewLeader] = useState<Partial<LeaderMember>>({
     name: '',
     role: '',
@@ -145,8 +213,8 @@ export const ManagerView: React.FC = () => {
     type: 'text',
     themeVerse: '',
     pastoralWord: '',
-    orderOfService: ['Prelúdio e Invocação', 'Leitura Bíblica', 'Cânticos', 'Mensagem Pastoral'],
-    announcements: ['Reuniões regulares nesta semana.'],
+    orderOfService: [],
+    announcements: [],
     pdfUrl: '',
     pdfFileName: ''
   });
@@ -201,23 +269,115 @@ export const ManagerView: React.FC = () => {
     isActive: true
   });
 
-  // --- Settings Form State ---
-  const [settingsForm, setSettingsForm] = useState(settings);
-
   useEffect(() => {
     setInfoForm(churchInfo);
   }, [churchInfo]);
 
   useEffect(() => {
-    setSettingsForm(settings);
-  }, [settings]);
+    if (activeChurch) {
+      setSlugInput(activeChurch.slug || '');
+      setCityInput(activeChurch.city || '');
+      setStateInput(activeChurch.state || '');
+      setThemeColorInput(activeChurch.themeColor || '#344E41');
+      setLatInput(activeChurch.latitude);
+      setLngInput(activeChurch.longitude);
+    }
+  }, [activeChurch]);
+
+  // Ensure Editors are redirected to 'bulletins' if activeTab is an Admin-only tab
+  useEffect(() => {
+    if (!isChurchAdmin && (activeTab === 'info' || activeTab === 'team' || activeTab === 'settings')) {
+      setActiveTab('bulletins');
+    }
+  }, [isChurchAdmin, activeTab]);
+
+  // Auto-generate slug in Onboarding Wizard unless manually edited
+  useEffect(() => {
+    if (!wizSlugManuallyEdited) {
+      const auto = slugifyChurchName(wizCity ? `${wizName}-${wizCity}` : wizName);
+      setWizSlug(auto);
+    }
+  }, [wizName, wizCity, wizSlugManuallyEdited]);
+
+  // Generate QR Code whenever activeChurch.slug changes
+  const churchShareUrl =
+    typeof window !== 'undefined' && activeChurch?.slug
+      ? `${window.location.origin}/${activeChurch.slug}`
+      : '';
+
+  useEffect(() => {
+    if (!churchShareUrl) {
+      setQrCodeDataUrl('');
+      return;
+    }
+    QRCode.toDataURL(churchShareUrl, {
+      width: 512,
+      margin: 2,
+      color: {
+        dark: '#1E2E27',
+        light: '#FFFFFF'
+      }
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [churchShareUrl]);
+
+  const handleCopyShareLink = () => {
+    if (!churchShareUrl) return;
+    navigator.clipboard.writeText(churchShareUrl);
+    setCopiedShareLink(true);
+    showToast('Link direto da igreja copiado!');
+    setTimeout(() => setCopiedShareLink(false), 3000);
+  };
+
+  const handleShareOnWhatsApp = () => {
+    if (!churchShareUrl) return;
+    const text = `Acesse o aplicativo oficial da ${activeChurch?.name || 'nossa igreja'}: ${churchShareUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handlePrintQrCode = () => {
+    if (!qrCodeDataUrl || !activeChurch) return;
+    const w = window.open('', '_blank');
+    if (!w) {
+      showToast('Baixe a imagem do QR Code para imprimir.', 'info');
+      return;
+    }
+    w.document.write(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="UTF-8" />
+          <title>QR Code — ${activeChurch.name}</title>
+          <style>
+            body { font-family: sans-serif; text-align: center; padding: 48px 24px; color: #1c1917; }
+            .card { max-width: 480px; margin: 0 auto; border: 2px solid #e7e5e4; border-radius: 24px; padding: 36px; }
+            h1 { font-size: 26px; margin-bottom: 8px; color: #284136; }
+            p { font-size: 15px; color: #57534e; margin-bottom: 24px; }
+            img { width: 280px; height: 280px; display: block; margin: 0 auto 20px; }
+            .url { font-family: monospace; font-size: 16px; font-weight: bold; background: #f5f5f4; padding: 10px 16px; border-radius: 12px; display: inline-block; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>${activeChurch.name}</h1>
+            <p>Aponte a câmera do seu celular para acessar nosso Boletim, Bíblia, Horários de Cultos e Escalas:</p>
+            <img src="${qrCodeDataUrl}" alt="QR Code" />
+            <div class="url">${churchShareUrl}</div>
+          </div>
+          <script>window.onload = () => { window.print(); };</script>
+        </body>
+      </html>
+    `);
+    w.document.close();
+  };
 
   // Cloud Google Auth Handler
   const handleGoogleAuth = async () => {
     setAuthErrorMsg(null);
     setAuthLoading(true);
     try {
-      await loginWithGoogleCloud(authChurchName);
+      await loginWithGoogleCloud();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('popup-closed')) {
@@ -225,7 +385,7 @@ export const ManagerView: React.FC = () => {
       } else if (msg.includes('unauthorized-domain')) {
         setShowVercelGuideOnLogin(true);
         setAuthErrorMsg(
-          `Domínio atual (${window.location.hostname}) ainda não foi adicionado em "Authorized domains" no Firebase. Veja o Passo 3 abaixo para autorizar em 10 segundos!`
+          `Domínio atual (${window.location.hostname}) ainda não foi adicionado em "Authorized domains" no Firebase.`
         );
       } else {
         setAuthErrorMsg(`Não foi possível autenticar com o Google: ${msg}`);
@@ -247,7 +407,7 @@ export const ManagerView: React.FC = () => {
           setAuthLoading(false);
           return;
         }
-        await registerManagerWithEmailCloud(authName, loginEmail, loginPassword, authChurchName);
+        await registerManagerWithEmailCloud(authName, loginEmail, loginPassword);
       } else {
         await loginManagerWithEmailCloud(loginEmail, loginPassword);
       }
@@ -255,12 +415,16 @@ export const ManagerView: React.FC = () => {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('operation-not-allowed')) {
         setAuthErrorMsg(
-          'O provedor de E-mail/Senha ainda não foi ativado no console do Firebase. Use o botão "Continuar com Conta Google" acima (já ativo!), ou ative E-mail/Senha em Authentication > Sign-in method no Firebase.'
+          'O provedor de E-mail/Senha ainda não foi ativado no console do Firebase. Use o botão "Continuar com Conta Google" acima, ou ative E-mail/Senha em Authentication > Sign-in method no Firebase.'
         );
       } else if (msg.includes('email-already-in-use')) {
         setAuthErrorMsg('Este e-mail já possui cadastro. Mude para a aba "Entrar na Conta".');
-      } else if (msg.includes('invalid-credential') || msg.includes('wrong-password') || msg.includes('user-not-found')) {
-        setAuthErrorMsg('E-mail ou senha incorretos. Se ainda não tem conta no banco, clique em "Criar Conta de Gestor".');
+      } else if (
+        msg.includes('invalid-credential') ||
+        msg.includes('wrong-password') ||
+        msg.includes('user-not-found')
+      ) {
+        setAuthErrorMsg('E-mail ou senha incorretos.');
       } else if (msg.includes('weak-password')) {
         setAuthErrorMsg('A senha deve ter pelo menos 6 caracteres.');
       } else {
@@ -274,17 +438,20 @@ export const ManagerView: React.FC = () => {
   // Image Upload with Canvas Compression
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    onCompressed: (base64: string) => void
+    onCompressed: (base64: string) => void,
+    maxWidth = 650
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      showToast('Comprimindo e processando imagem...', 'info');
-      const base64 = await ChurchStorageService.compressImageFile(file, 1200, 0.82);
+      showToast('Processando e otimizando imagem...', 'info');
+      const base64 = await ChurchStorageService.compressImageFile(file, maxWidth, 0.8);
       onCompressed(base64);
       showToast('Imagem carregada com sucesso!');
     } catch {
       showToast('Erro ao processar imagem.', 'error');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -310,67 +477,234 @@ export const ManagerView: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  // 1. Church Info Handlers
-  const handleSaveChurchInfo = (e: React.FormEvent) => {
+  // Onboarding Wizard Submit
+  const handleCompleteOnboardingWizard = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateChurchInfo(infoForm);
+    if (!wizName.trim() || !wizCity.trim() || !wizState.trim()) {
+      showToast('Informe o nome da igreja, cidade e UF.', 'error');
+      return;
+    }
+    setWizSubmitting(true);
+    try {
+      await createNewChurchInCloud({
+        name: wizName.trim(),
+        slug: wizSlug.trim() || slugifyChurchName(`${wizName}-${wizCity}`),
+        logoUrl: wizLogoUrl,
+        themeColor: wizThemeColor,
+        city: wizCity.trim(),
+        state: wizState.trim().toUpperCase(),
+        address: wizAddress.trim(),
+        latitude: wizLat,
+        longitude: wizLng,
+        primaryPhone: wizPhone.trim(),
+        whatsappNumber: wizWhatsapp.trim(),
+        instagramUrl: wizInstagram.trim(),
+        youtubeUrl: wizYoutube.trim(),
+        facebookUrl: wizFacebook.trim(),
+        tagline: wizTagline.trim(),
+        schedules: wizSchedules
+      });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Erro ao criar igreja.', 'error');
+    } finally {
+      setWizSubmitting(false);
+    }
+  };
+
+  // 1. Church Info Handlers
+  const handleSaveChurchInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const updatedCityState =
+      cityInput && stateInput ? `${cityInput} - ${stateInput.toUpperCase()}` : infoForm.cityStateZip;
+    const nextInfo = {
+      ...infoForm,
+      cityStateZip: updatedCityState
+    };
+    updateChurchInfo(nextInfo);
+    await updateChurchSlugAndMeta({
+      slug: slugInput,
+      city: cityInput,
+      state: stateInput.toUpperCase(),
+      themeColor: themeColorInput,
+      latitude: latInput,
+      longitude: lngInput
+    });
+  };
+
+  const handleCaptureGpsForChurch = (isWizard: boolean) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      showToast('Geolocalização não disponível neste navegador.', 'error');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        if (isWizard) {
+          setWizLat(lat);
+          setWizLng(lng);
+        } else {
+          setLatInput(lat);
+          setLngInput(lng);
+        }
+        showToast('Coordenadas GPS capturadas com sucesso!');
+      },
+      () => {
+        showToast('Não foi possível obter a localização atual.', 'error');
+      }
+    );
   };
 
   const handleAddSchedule = () => {
-    if (!newSchedule.title || !newSchedule.time) {
+    if (!newSchedule.title?.trim() || !newSchedule.time?.trim()) {
       showToast('Preencha título e horário do culto.', 'error');
       return;
     }
-    const item: ScheduleItem = {
-      id: `sch-${Date.now()}`,
-      day: newSchedule.day || 'Domingo',
-      time: newSchedule.time || '19h00',
-      title: newSchedule.title,
-      description: newSchedule.description || '',
-      location: newSchedule.location || 'Templo Principal'
-    };
-    setInfoForm((prev) => ({
-      ...prev,
-      schedules: [...prev.schedules, item]
-    }));
-    setNewSchedule({ day: 'Domingo', time: '19h00', title: '', description: '', location: 'Templo' });
+
+    if (editingScheduleId) {
+      const updatedSchedules = infoForm.schedules.map((s) =>
+        s.id === editingScheduleId
+          ? {
+              ...s,
+              day: newSchedule.day?.trim() || 'Domingo',
+              time: newSchedule.time?.trim() || '19h00',
+              title: newSchedule.title!.trim(),
+              description: newSchedule.description?.trim() || '',
+              location: newSchedule.location?.trim() || 'Templo Principal'
+            }
+          : s
+      );
+      const nextInfo: ChurchInfo = { ...infoForm, schedules: updatedSchedules };
+      setInfoForm(nextInfo);
+      updateChurchInfo(nextInfo);
+      setEditingScheduleId(null);
+    } else {
+      const item: ScheduleItem = {
+        id: `sch-${Date.now()}`,
+        day: newSchedule.day?.trim() || 'Domingo',
+        time: newSchedule.time?.trim() || '19h00',
+        title: newSchedule.title.trim(),
+        description: newSchedule.description?.trim() || '',
+        location: newSchedule.location?.trim() || 'Templo Principal'
+      };
+      const nextInfo: ChurchInfo = {
+        ...infoForm,
+        schedules: [...infoForm.schedules, item]
+      };
+      setInfoForm(nextInfo);
+      updateChurchInfo(nextInfo);
+    }
+
+    setNewSchedule({ day: 'Domingo', time: '19h00', title: '', description: '', location: 'Templo Principal' });
+  };
+
+  const handleEditSchedule = (sch: ScheduleItem) => {
+    setEditingScheduleId(sch.id);
+    setNewSchedule({
+      day: sch.day,
+      time: sch.time,
+      title: sch.title,
+      description: sch.description,
+      location: sch.location || 'Templo Principal'
+    });
   };
 
   const handleRemoveSchedule = (id: string) => {
-    setInfoForm((prev) => ({
-      ...prev,
-      schedules: prev.schedules.filter((s) => s.id !== id)
-    }));
+    const nextInfo: ChurchInfo = {
+      ...infoForm,
+      schedules: infoForm.schedules.filter((s) => s.id !== id)
+    };
+    setInfoForm(nextInfo);
+    updateChurchInfo(nextInfo);
+    if (editingScheduleId === id) {
+      setEditingScheduleId(null);
+      setNewSchedule({ day: 'Domingo', time: '19h00', title: '', description: '', location: 'Templo Principal' });
+    }
   };
 
   const handleAddLeader = () => {
-    if (!newLeader.name || !newLeader.role) {
+    if (!newLeader.name?.trim() || !newLeader.role?.trim()) {
       showToast('Preencha o nome e o cargo do líder.', 'error');
       return;
     }
-    const leader: LeaderMember = {
-      id: `lead-${Date.now()}`,
-      name: newLeader.name,
-      role: newLeader.role,
-      bio: newLeader.bio || '',
-      photoUrl:
-        newLeader.photoUrl ||
-        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-      phone: newLeader.phone || '',
-      email: newLeader.email || ''
-    };
-    setInfoForm((prev) => ({
-      ...prev,
-      leadership: [...prev.leadership, leader]
-    }));
+
+    if (editingLeaderId) {
+      const updatedLeadership = infoForm.leadership.map((l) =>
+        l.id === editingLeaderId
+          ? {
+              ...l,
+              name: newLeader.name!.trim(),
+              role: newLeader.role!.trim(),
+              bio: newLeader.bio?.trim() || '',
+              photoUrl: newLeader.photoUrl || l.photoUrl || '',
+              phone: newLeader.phone?.trim() || '',
+              email: newLeader.email?.trim() || ''
+            }
+          : l
+      );
+      const nextInfo: ChurchInfo = {
+        ...infoForm,
+        leadership: updatedLeadership
+      };
+      setInfoForm(nextInfo);
+      updateChurchInfo(nextInfo);
+      setEditingLeaderId(null);
+    } else {
+      const leader: LeaderMember = {
+        id: `lead-${Date.now()}`,
+        name: newLeader.name.trim(),
+        role: newLeader.role.trim(),
+        bio: newLeader.bio?.trim() || '',
+        photoUrl: newLeader.photoUrl || '',
+        phone: newLeader.phone?.trim() || '',
+        email: newLeader.email?.trim() || ''
+      };
+      const nextInfo: ChurchInfo = {
+        ...infoForm,
+        leadership: [...infoForm.leadership, leader]
+      };
+      setInfoForm(nextInfo);
+      updateChurchInfo(nextInfo);
+    }
+
     setNewLeader({ name: '', role: '', bio: '', photoUrl: '', phone: '', email: '' });
   };
 
+  const handleEditLeader = (leader: LeaderMember) => {
+    setEditingLeaderId(leader.id);
+    setNewLeader({
+      name: leader.name,
+      role: leader.role,
+      bio: leader.bio || '',
+      photoUrl: leader.photoUrl || '',
+      phone: leader.phone || '',
+      email: leader.email || ''
+    });
+  };
+
+  const handleQuickLeaderPhotoUpload = (leaderId: string, base64: string) => {
+    const updatedLeadership = infoForm.leadership.map((l) =>
+      l.id === leaderId ? { ...l, photoUrl: base64 } : l
+    );
+    const nextInfo: ChurchInfo = {
+      ...infoForm,
+      leadership: updatedLeadership
+    };
+    setInfoForm(nextInfo);
+    updateChurchInfo(nextInfo);
+  };
+
   const handleRemoveLeader = (id: string) => {
-    setInfoForm((prev) => ({
-      ...prev,
-      leadership: prev.leadership.filter((l) => l.id !== id)
-    }));
+    const nextInfo: ChurchInfo = {
+      ...infoForm,
+      leadership: infoForm.leadership.filter((l) => l.id !== id)
+    };
+    setInfoForm(nextInfo);
+    updateChurchInfo(nextInfo);
+    if (editingLeaderId === id) {
+      setEditingLeaderId(null);
+      setNewLeader({ name: '', role: '', bio: '', photoUrl: '', phone: '', email: '' });
+    }
   };
 
   // 2. Bulletin Handlers
@@ -673,12 +1007,7 @@ export const ManagerView: React.FC = () => {
     setBannerModalOpen(false);
   };
 
-  // 5. Settings & Backup Export/Import
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    updateSettings(settingsForm);
-  };
-
+  // 5. Backup Export/Import
   const handleExportBackup = () => {
     const data = {
       churchInfo,
@@ -692,7 +1021,10 @@ export const ManagerView: React.FC = () => {
     const jsonStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', jsonStr);
-    downloadAnchor.setAttribute('download', `backup_igreja_${new Date().toISOString().split('T')[0]}.json`);
+    downloadAnchor.setAttribute(
+      'download',
+      `backup_${activeChurch?.slug || 'igreja'}_${new Date().toISOString().split('T')[0]}.json`
+    );
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -724,172 +1056,51 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
   const handleCopyVercelEnvVars = () => {
     navigator.clipboard.writeText(vercelEnvBlock);
     setCopiedEnvVars(true);
-    showToast('Variáveis de ambiente do Firebase copiadas para colar na Vercel!');
+    showToast('Variáveis de ambiente do Firebase copiadas!');
     setTimeout(() => setCopiedEnvVars(false), 3000);
   };
 
-  const pendingManagersCount = allManagers.filter((m) => m.status === 'pending').length;
+  const handleInviteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmailInput.trim()) return;
+    setInvitingManager(true);
+    try {
+      await inviteTeamMemberByEmail(inviteEmailInput, inviteRoleInput);
+      setInviteEmailInput('');
+    } finally {
+      setInvitingManager(false);
+    }
+  };
 
-  // IF USER IS LOGGED INTO FIREBASE BUT PENDING APPROVAL BY THE 1ST MANAGER:
-  if (firebaseUser && currentManagerAccount && currentManagerAccount.status !== 'approved') {
-    const isRevoked = currentManagerAccount.status === 'revoked';
-    return (
-      <div className="max-w-lg mx-auto my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-6 text-center">
-        <div
-          className={`w-16 h-16 rounded-2xl mx-auto flex items-center justify-center ${
-            isRevoked ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'
-          }`}
-        >
-          {isRevoked ? <Lock className="w-8 h-8" /> : <Clock className="w-8 h-8" />}
-        </div>
-
-        <div className="space-y-2">
-          <span
-            className={`text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full inline-block ${
-              isRevoked ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-900'
-            }`}
-          >
-            {isRevoked ? 'Acesso Revogado' : 'Aguardando Liberação do 1º Gestor'}
-          </span>
-          <h1 className="text-2xl font-serif font-bold text-stone-900">
-            {isRevoked
-              ? 'Seu acesso administrativo foi desativado'
-              : 'Solicitação de Gestor Enviada!'}
-          </h1>
-          <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-            {isRevoked ? (
-              <>
-                O Administrador Principal da <strong>{churchRegistry?.churchName || churchInfo.name}</strong> revogou a
-                permissão desta conta (<strong>{currentManagerAccount.email}</strong>).
-              </>
-            ) : (
-              <>
-                Para evitar duplicidade de contas da mesma igreja, apenas o{' '}
-                <strong>1º Gestor Principal ({churchRegistry?.ownerName || churchRegistry?.ownerEmail})</strong> pode
-                liberar novos gestores. Assim que ele aprovar seu cadastro no painel em{' '}
-                <strong>&ldquo;Gestores &amp; Acessos&rdquo;</strong>, esta tela abrirá automaticamente!
-              </>
-            )}
-          </p>
-        </div>
-
-        <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 text-left text-xs space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-stone-500">Sua Conta:</span>
-            <span className="font-bold text-stone-900">{currentManagerAccount.name}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-stone-500">E-mail:</span>
-            <span className="font-mono text-stone-800">{currentManagerAccount.email}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-stone-500">Igreja Vinculada:</span>
-            <span className="font-bold text-[#344E41]">{churchRegistry?.churchName || churchInfo.name}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-stone-500">1º Gestor Responsável:</span>
-            <span className="font-semibold text-stone-800">
-              {churchRegistry?.ownerName} ({churchRegistry?.ownerEmail})
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-center gap-3 pt-2">
-          <button
-            type="button"
-            onClick={managerLogout}
-            className="min-h-[44px] px-5 py-2.5 rounded-xl border border-stone-200 hover:bg-stone-100 text-xs font-semibold text-stone-700 flex items-center gap-2 transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>Sair desta Conta</span>
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // IF NOT AUTHENTICATED: Show Cloud Login / Registration Card with Anti-Duplication Status
-  if (!isManagerAuthenticated) {
-    const hasPrimaryOwner = Boolean(churchRegistry);
-
+  // ============================================================================
+  // CASE 1: NOT AUTHENTICATED -> SHOW LOGIN / REGISTRATION PORTAL
+  // ============================================================================
+  if (!firebaseUser) {
     return (
       <div className="max-w-md mx-auto my-6 sm:my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-6">
         <div className="text-center space-y-2">
           <div className="w-14 h-14 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center mx-auto mb-2">
             <Lock className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-serif font-bold text-stone-900 tracking-tight">Área do Gestor</h1>
+          <h1 className="text-2xl font-serif font-bold text-stone-900 tracking-tight">
+            Portal do Gestor
+          </h1>
           <p className="text-xs text-stone-500 leading-relaxed">
-            {!hasPrimaryOwner
-              ? 'Crie a conta do 1º Gestor Principal para registrar oficialmente sua igreja no banco de dados em nuvem.'
-              : `Igreja registrada por ${churchRegistry?.ownerName}. Novos cadastros ficam sujeitos à aprovação do 1º Gestor.`}
+            Entre na sua conta para administrar sua igreja ou crie uma conta gratuita para cadastrar uma nova igreja na plataforma.
           </p>
         </div>
 
-        {/* Status Banner of Church Ownership */}
-        <div
-          className={`p-3.5 rounded-2xl border text-xs space-y-1 ${
-            !hasPrimaryOwner
-              ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
-              : 'bg-amber-50/80 border-amber-200 text-amber-950'
-          }`}
+        <button
+          type="button"
+          disabled={authLoading}
+          onClick={handleGoogleAuth}
+          className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] disabled:opacity-60 text-white font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2.5 shadow-xs"
         >
-          {!hasPrimaryOwner ? (
-            <>
-              <div className="font-bold flex items-center gap-1.5 text-emerald-900">
-                <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span>Configuração do 1º Gestor Disponível</span>
-              </div>
-              <p className="text-[11px] text-emerald-800 leading-relaxed">
-                A primeira conta que se conectar será definida como <strong>Gestor Principal</strong> da igreja e terá o poder exclusivo de liberar outros gestores.
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="font-bold flex items-center gap-1.5 text-amber-900">
-                <Shield className="w-4 h-4 text-amber-700 shrink-0" />
-                <span>Proteção Contra Duplicidade Ativa</span>
-              </div>
-              <p className="text-[11px] text-amber-800 leading-relaxed">
-                Esta igreja já está vinculada ao 1º Gestor (<strong>{churchRegistry?.ownerName}</strong>). Se você é um novo líder, crie sua conta e aguarde a liberação dele.
-              </p>
-            </>
-          )}
-        </div>
-
-        {/* Google One-Click Auth (Recommended in Firebase) */}
-        <div className="space-y-3">
-          {!hasPrimaryOwner && (
-            <div>
-              <label className="block text-xs font-bold text-stone-700 mb-1">
-                Nome Oficial da Igreja (para registro único)
-              </label>
-              <input
-                type="text"
-                value={authChurchName}
-                onChange={(e) => setAuthChurchName(e.target.value)}
-                placeholder="Ex: Igreja Presbiteriana Central"
-                className="w-full min-h-[42px] px-3.5 rounded-xl border border-stone-200 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
-              />
-            </div>
-          )}
-
-          <button
-            type="button"
-            disabled={authLoading}
-            onClick={handleGoogleAuth}
-            className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] disabled:opacity-60 text-white font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-2.5 shadow-xs"
-          >
-            <ShieldCheck className="w-4 h-4 shrink-0" />
-            <span>
-              {authLoading
-                ? 'Conectando ao Banco de Dados...'
-                : !hasPrimaryOwner
-                ? 'Criar Conta de 1º Gestor com Google'
-                : 'Entrar / Solicitar Acesso com Google'}
-            </span>
-          </button>
-        </div>
+          <ShieldCheck className="w-4 h-4 shrink-0" />
+          <span>
+            {authLoading ? 'Conectando ao Firebase...' : 'Continuar com Conta Google'}
+          </span>
+        </button>
 
         <div className="relative flex py-1 items-center">
           <div className="flex-grow border-t border-stone-200" />
@@ -899,7 +1110,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="flex-grow border-t border-stone-200" />
         </div>
 
-        {/* Mode Switcher: Entrar vs Criar Conta */}
+        {/* Mode Switcher */}
         <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-100 rounded-xl">
           <button
             type="button"
@@ -923,7 +1134,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               authMode === 'register' ? 'bg-white text-stone-900 shadow-2xs' : 'text-stone-500 hover:text-stone-800'
             }`}
           >
-            {!hasPrimaryOwner ? 'Criar 1º Gestor' : 'Solicitar Cadastro'}
+            Cadastrar Minha Igreja
           </button>
         </div>
 
@@ -945,7 +1156,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 required
                 value={authName}
                 onChange={(e) => setAuthName(e.target.value)}
-                placeholder="Ex: Rev. Paulo Silveira"
+                placeholder="Nome do Pastor ou Gestor"
                 className="w-full min-h-[44px] px-3.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
               />
             </div>
@@ -961,7 +1172,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 required
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="seuemail@igreja.com.br"
+                placeholder="seuemail@exemplo.com"
                 className="w-full min-h-[44px] pl-10 pr-3 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#344E41]"
               />
               <Mail className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -994,185 +1205,728 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             <UserPlus className="w-4 h-4" />
             <span>
               {authMode === 'register'
-                ? !hasPrimaryOwner
-                  ? 'Cadastrar como 1º Gestor Principal'
-                  : 'Enviar Solicitação ao 1º Gestor'
+                ? 'Criar Conta e Configurar Igreja'
                 : 'Entrar com E-mail e Senha'}
             </span>
           </button>
         </form>
 
-        {/* Helper for users who deployed to Vercel BEFORE creating the Firebase Database */}
-        <div className="pt-3 border-t border-stone-200/80 space-y-2.5">
+        <div className="pt-3 border-t border-stone-200/80 space-y-2">
           <button
             type="button"
-            onClick={pullLatestFromCloud}
-            className="w-full py-2.5 px-3 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] border border-emerald-200 text-xs font-bold text-[#344E41] flex items-center justify-center gap-2 transition-colors"
+            onClick={switchChurch}
+            className="w-full py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 flex items-center justify-center gap-1.5"
           >
-            <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-            <span>Puxar Dados Atualizados do Banco Firebase Agora</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Voltar para a busca de igrejas</span>
           </button>
-
-          <button
-            type="button"
-            onClick={() => setShowVercelGuideOnLogin((prev) => !prev)}
-            className="w-full py-2 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-xs font-bold text-[#344E41] flex items-center justify-between transition-colors"
-          >
-            <span className="flex items-center gap-2">
-              <Layers className="w-4 h-4 shrink-0" />
-              <span>Subiu na Vercel antes do banco? Veja como conectar</span>
-            </span>
-            <span className="text-[11px] underline">{showVercelGuideOnLogin ? 'Ocultar' : 'Abrir Guia'}</span>
-          </button>
-
-          {showVercelGuideOnLogin && (
-            <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 text-xs text-stone-700 space-y-3 leading-relaxed">
-              <div className="space-y-1">
-                <p className="font-bold text-stone-900">1. Atualize o código na Vercel (GitHub / Redeploy)</p>
-                <p className="text-[11px] text-stone-600">
-                  Como você subiu na Vercel antes de criarmos o banco, envie esta versão atualizada do código para o seu GitHub/Vercel. O arquivo <code>firebase-applet-config.json</code> já está configurado com o banco <strong>{activeFirebaseConfig.projectId}</strong>.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-bold text-stone-900">2. Ou cole as Variáveis na Vercel (Environment Variables)</p>
-                  <button
-                    type="button"
-                    onClick={handleCopyVercelEnvVars}
-                    className="px-2.5 py-1 rounded-lg bg-[#344E41] hover:bg-[#284136] text-white font-bold text-[11px] flex items-center gap-1 shrink-0"
-                  >
-                    {copiedEnvVars ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedEnvVars ? 'Copiado!' : 'Copiar .env'}</span>
-                  </button>
-                </div>
-                <pre className="p-2.5 rounded-xl bg-stone-900 text-stone-100 font-mono text-[10px] overflow-x-auto">
-                  {vercelEnvBlock}
-                </pre>
-              </div>
-
-              <div className="space-y-1">
-                <p className="font-bold text-stone-900">3. Libere seu domínio .vercel.app no Firebase</p>
-                <p className="text-[11px] text-stone-600">
-                  No Console do Firebase (projeto <strong>{activeFirebaseConfig.projectId}</strong>), acesse{' '}
-                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> e adicione seu domínio{' '}
-                  <code>seu-app.vercel.app</code>.
-                </p>
-                <a
-                  href={`https://console.firebase.google.com/project/${activeFirebaseConfig.projectId}/authentication/settings`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#344E41] underline pt-0.5"
-                >
-                  <span>Abrir Firebase Authentication Settings</span>
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );
   }
 
-  // AUTHENTICATED MANAGER DASHBOARD
-  return (
-    <div className="space-y-6 pb-16">
-      {/* 1. Dashboard Top Header */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/90 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight">
-                Painel de Gestão
-              </h1>
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">
-                {isPrimaryOwner ? '1º Gestor Principal' : 'Gestor Autorizado'}
-              </span>
-              {isCloudSynced && (
-                <span className="text-[10px] bg-sky-100 text-sky-900 font-bold px-2.5 py-0.5 rounded-full">
-                  Banco em Nuvem Ativo
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-stone-500">
-              {currentManagerAccount
-                ? `Conectado como ${currentManagerAccount.name} (${currentManagerAccount.email})`
-                : 'Controle total de conteúdos, cultos, boletins, aniversariantes e escalas.'}
+  // ============================================================================
+  // CASE 1B: AUTHENTICATED WITH EMAIL/PASSWORD BUT EMAIL NOT VERIFIED YET
+  // ============================================================================
+  if (!isEmailVerified) {
+    return (
+      <div className="max-w-lg mx-auto my-8 p-6 sm:p-8 bg-white rounded-3xl border border-amber-200 shadow-sm space-y-5 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-800 mx-auto flex items-center justify-center">
+          <Mail className="w-7 h-7" />
+        </div>
+        <div className="space-y-2">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-900 bg-amber-100 px-3 py-1 rounded-full">
+            Verificação de Segurança Obrigatória
+          </span>
+          <h1 className="text-2xl font-serif font-bold text-stone-900">
+            Confirme seu e-mail
+          </h1>
+          <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+            Enviamos um link de confirmação para <strong>{firebaseUser.email}</strong>.
+            Por segurança, confirme seu endereço de e-mail para liberar o painel de gestão, aceitar convites de equipe ou acessar permissões administrativas.
+          </p>
+          <p className="text-[11px] text-stone-500">
+            Dica: Se você entrar com sua <strong>Conta Google</strong>, o e-mail já vem verificado automaticamente.
+          </p>
+        </div>
+
+        <div className="space-y-2.5 pt-2">
+          <button
+            type="button"
+            onClick={() => void checkEmailVerificationNow()}
+            className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs transition-colors"
+          >
+            <Check className="w-4 h-4" />
+            <span>Já confirmei meu e-mail — Liberar Acesso</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void resendEmailVerification()}
+            className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-200 font-bold text-xs flex items-center justify-center gap-2 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Reenviar e-mail de verificação</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleGoogleAuth}
+            className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-colors"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Entrar com Conta Google (Verificação Imediata)</span>
+          </button>
+        </div>
+
+        <div className="pt-3 border-t border-stone-200/80 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={switchChurch}
+            className="py-2 text-xs font-semibold text-stone-500 hover:text-stone-800 flex items-center gap-1.5"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Voltar ao início</span>
+          </button>
+          <button
+            type="button"
+            onClick={managerLogout}
+            className="py-2 text-xs font-semibold text-rose-600 hover:underline flex items-center gap-1.5"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sair desta conta</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // CASE 2: AUTHENTICATED USER NEEDS CHURCH ONBOARDING WIZARD (Requirement 3)
+  // ============================================================================
+  if (needsChurchOnboarding || !activeChurch) {
+    return (
+      <div className="max-w-3xl mx-auto my-6 sm:my-8 bg-white rounded-3xl p-6 sm:p-10 border border-stone-200/90 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
+          <div className="space-y-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-3 py-1 rounded-full">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Assistente de Configuração da Igreja</span>
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-serif font-bold text-stone-900">
+              Cadastre sua Igreja na Plataforma
+            </h1>
+            <p className="text-xs sm:text-sm text-stone-500">
+              Sua igreja nascerá 100% limpa (sem dados de exemplo) e já terá um link exclusivo e QR Code para seus membros.
             </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start">
+            {isCreatingAdditionalChurch && managedChurches.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreatingAdditionalChurch(false);
+                  if (!activeChurch && managedChurches[0]) {
+                    selectChurchBySlug(managedChurches[0].slug, 'manager');
+                  }
+                }}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl border border-stone-200 text-xs font-semibold text-stone-600 hover:bg-stone-100 flex items-center gap-1.5"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Voltar ao Painel</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={managerLogout}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-stone-200 text-xs font-semibold text-stone-600 hover:bg-stone-100 flex items-center gap-1.5"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sair</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
-          <button
-            type="button"
-            onClick={pullLatestFromCloud}
-            className="min-h-[42px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
-            title="Buscar as informações mais recentes gravadas no banco Firebase"
-          >
-            <Download className="w-3.5 h-3.5 text-[#344E41]" />
-            <span>Puxar do Banco</span>
-          </button>
+        <form onSubmit={handleCompleteOnboardingWizard} className="space-y-6">
+          {/* 1. Nome, Link (Slug) e Logo */}
+          <div className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-4">
+            <h3 className="font-bold text-stone-900 text-sm uppercase tracking-wider">
+              1. Identidade Visual &amp; Link Exclusivo
+            </h3>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-stone-200/70">
+              <div className="flex items-center gap-4">
+                <div
+                  className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center text-white shrink-0 border-2 border-white shadow-xs"
+                  style={{ backgroundColor: wizThemeColor }}
+                >
+                  {wizLogoUrl ? (
+                    <img src={wizLogoUrl} alt="Logo" className="w-full h-full object-cover" />
+                  ) : (
+                    <Church className="w-7 h-7" />
+                  )}
+                </div>
+                <div>
+                  <span className="font-bold text-stone-900 text-sm block">Logotipo da Igreja</span>
+                  <span className="text-xs text-stone-500">Opcional — você pode enviar do celular ou computador</span>
+                </div>
+              </div>
+
+              <label className="min-h-[40px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-2 cursor-pointer self-start sm:self-auto">
+                <Upload className="w-4 h-4" />
+                <span>Enviar Logo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleFileUpload(e, (b64) => setWizLogoUrl(b64), 500)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Nome da Igreja *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={wizName}
+                  onChange={(e) => setWizName(e.target.value)}
+                  placeholder="Ex: Igreja Presbiteriana de Aracaju"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Link Direto (Slug Único Editável) *
+                </label>
+                <div className="flex items-center rounded-xl border border-stone-300 bg-white overflow-hidden">
+                  <span className="px-2.5 text-xs text-stone-400 font-mono bg-stone-100 py-2.5 border-r border-stone-200">
+                    /
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={wizSlug}
+                    onChange={(e) => {
+                      setWizSlugManuallyEdited(true);
+                      setWizSlug(slugifyChurchName(e.target.value));
+                    }}
+                    placeholder="ip-aracaju-se"
+                    className="w-full p-2.5 text-sm font-mono focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Theme Color Picker */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-stone-700">
+                Cor do Tema da Igreja
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {PRESET_THEME_COLORS.map((c) => (
+                  <button
+                    key={c.hex}
+                    type="button"
+                    onClick={() => setWizThemeColor(c.hex)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all ${
+                      wizThemeColor === c.hex
+                        ? 'border-stone-900 ring-2 ring-stone-900/20 bg-white text-stone-900'
+                        : 'border-stone-200 bg-white text-stone-600'
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: c.hex }} />
+                    <span>{c.name}</span>
+                  </button>
+                ))}
+                <input
+                  type="color"
+                  value={wizThemeColor}
+                  onChange={(e) => setWizThemeColor(e.target.value)}
+                  className="w-9 h-9 rounded-xl border border-stone-300 cursor-pointer bg-white p-0.5"
+                  title="Escolher cor personalizada"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Localização & Contatos */}
+          <div className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="font-bold text-stone-900 text-sm uppercase tracking-wider">
+                2. Endereço, Cidade/UF &amp; Contatos
+              </h3>
+              <button
+                type="button"
+                onClick={() => handleCaptureGpsForChurch(true)}
+                className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-100 border border-stone-200 text-xs font-semibold text-[#344E41] flex items-center gap-1.5"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                <span>
+                  {wizLat !== undefined ? 'GPS Capturado ✓' : 'Usar minha localização GPS para o mapa'}
+                </span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-stone-700 mb-1">Cidade *</label>
+                <input
+                  type="text"
+                  required
+                  value={wizCity}
+                  onChange={(e) => setWizCity(e.target.value)}
+                  placeholder="Ex: Nossa Senhora da Glória"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">UF (Estado) *</label>
+                <input
+                  type="text"
+                  required
+                  maxLength={2}
+                  value={wizState}
+                  onChange={(e) => setWizState(e.target.value.toUpperCase())}
+                  placeholder="SE"
+                  className="w-full p-2.5 text-sm uppercase rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-stone-700 mb-1">
+                Endereço (Rua, Número, Bairro)
+              </label>
+              <input
+                type="text"
+                value={wizAddress}
+                onChange={(e) => setWizAddress(e.target.value)}
+                placeholder="Informe o endereço do templo"
+                className="w-full p-2.5 text-sm rounded-xl border border-stone-300 bg-white"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Telefone (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={wizPhone}
+                  onChange={(e) => setWizPhone(e.target.value)}
+                  placeholder="Com DDD"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  WhatsApp (Opcional — apenas números com DDD)
+                </label>
+                <input
+                  type="text"
+                  value={wizWhatsapp}
+                  onChange={(e) => setWizWhatsapp(e.target.value)}
+                  placeholder="Ex: 5579999999999"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Instagram (URL)</label>
+                <input
+                  type="text"
+                  value={wizInstagram}
+                  onChange={(e) => setWizInstagram(e.target.value)}
+                  placeholder="https://instagram.com/..."
+                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">YouTube (URL)</label>
+                <input
+                  type="text"
+                  value={wizYoutube}
+                  onChange={(e) => setWizYoutube(e.target.value)}
+                  placeholder="https://youtube.com/..."
+                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Facebook (URL)</label>
+                <input
+                  type="text"
+                  value={wizFacebook}
+                  onChange={(e) => setWizFacebook(e.target.value)}
+                  placeholder="https://facebook.com/..."
+                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Horários de Culto Iniciais */}
+          <div className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
+            <h3 className="font-bold text-stone-900 text-sm uppercase tracking-wider">
+              3. Horários de Cultos (Opcional — pode adicionar depois)
+            </h3>
+
+            {wizSchedules.length > 0 && (
+              <div className="space-y-2">
+                {wizSchedules.map((s) => (
+                  <div
+                    key={s.id}
+                    className="p-2.5 rounded-xl bg-white border border-stone-200 flex items-center justify-between text-xs"
+                  >
+                    <span>
+                      <strong>{s.day} às {s.time}:</strong> {s.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setWizSchedules(wizSchedules.filter((x) => x.id !== s.id))}
+                      className="text-rose-600 hover:underline font-semibold"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+              <input
+                type="text"
+                value={wizSchDay}
+                onChange={(e) => setWizSchDay(e.target.value)}
+                placeholder="Dia (ex: Domingo)"
+                className="p-2 text-xs rounded-xl border border-stone-300 bg-white"
+              />
+              <input
+                type="text"
+                value={wizSchTime}
+                onChange={(e) => setWizSchTime(e.target.value)}
+                placeholder="Hora (ex: 19h00)"
+                className="p-2 text-xs rounded-xl border border-stone-300 bg-white"
+              />
+              <input
+                type="text"
+                value={wizSchTitle}
+                onChange={(e) => setWizSchTitle(e.target.value)}
+                placeholder="Ex: Culto de Adoração"
+                className="p-2 text-xs rounded-xl border border-stone-300 bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (!wizSchTitle.trim()) return;
+                  setWizSchedules([
+                    ...wizSchedules,
+                    {
+                      id: `sch-${Date.now()}`,
+                      day: wizSchDay || 'Domingo',
+                      time: wizSchTime || '19h00',
+                      title: wizSchTitle.trim(),
+                      description: '',
+                      location: 'Templo Principal'
+                    }
+                  ]);
+                  setWizSchTitle('');
+                }}
+                className="px-3 py-2 rounded-xl bg-stone-900 text-white text-xs font-bold"
+              >
+                + Incluir Horário
+              </button>
+            </div>
+          </div>
 
           <button
-            type="button"
-            onClick={syncLocalDataToCloud}
-            className="min-h-[42px] px-3.5 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
-            title="Forçar envio de todos os dados desta tela para o banco na nuvem"
+            type="submit"
+            disabled={wizSubmitting}
+            className="w-full min-h-[50px] rounded-2xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-sm shadow-md transition-colors flex items-center justify-center gap-2"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Enviar p/ Nuvem</span>
+            <Check className="w-5 h-5" />
+            <span>
+              {wizSubmitting
+                ? 'Criando igreja no banco de dados...'
+                : 'Concluir Cadastro e Abrir Painel da Minha Igreja'}
+            </span>
           </button>
+        </form>
+      </div>
+    );
+  }
 
+  // ============================================================================
+  // CASE 3: AUTHENTICATED USER IS NOT A MANAGER OF THIS SPECIFIC CHURCH
+  // ============================================================================
+  if (!isManagerAuthenticated) {
+    return (
+      <div className="max-w-lg mx-auto my-8 p-6 sm:p-8 bg-white rounded-3xl border border-stone-200/90 shadow-sm space-y-5 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 mx-auto flex items-center justify-center">
+          <Shield className="w-7 h-7" />
+        </div>
+        <h1 className="text-xl sm:text-2xl font-serif font-bold text-stone-900">
+          Acesso Restrito aos Gestores desta Igreja
+        </h1>
+        <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+          Sua conta (<strong>{firebaseUser.email}</strong>) não está listada como gestora da{' '}
+          <strong>{activeChurch.name}</strong>. Solicite ao gestor titular ({activeChurch.ownerEmail}) que convide seu e-mail na aba &ldquo;Gestores &amp; Acessos&rdquo;.
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
           <button
+            type="button"
+            onClick={() => setCurrentView('home')}
+            className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] text-white text-xs font-bold"
+          >
+            Voltar ao App da Igreja
+          </button>
+          <button
+            type="button"
             onClick={managerLogout}
-            className="min-h-[42px] px-4 py-2 rounded-xl border border-stone-200 hover:bg-rose-50 hover:text-rose-600 text-stone-600 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            className="min-h-[42px] px-4 py-2 rounded-xl border border-stone-200 text-xs font-semibold text-stone-700"
           >
-            <LogOut className="w-4 h-4" />
-            <span>Sair da Gestão</span>
+            Trocar de Conta
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // CASE 4: AUTHENTICATED MANAGER DASHBOARD (/{slug}/gestor)
+  // ============================================================================
+  return (
+    <div className="space-y-6 pb-16">
+      {/* 1. Dashboard Top Header + Multi-Church Selector */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-12 h-12 rounded-2xl text-white flex items-center justify-center shrink-0 overflow-hidden"
+              style={{ backgroundColor: activeChurch.themeColor || '#344E41' }}
+            >
+              {activeChurch.logoUrl ? (
+                <img src={activeChurch.logoUrl} alt={activeChurch.name} className="w-full h-full object-cover" />
+              ) : (
+                <ShieldCheck className="w-6 h-6" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-bold text-stone-900 tracking-tight">
+                  Gestão — {activeChurch.name}
+                </h1>
+                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full font-mono">
+                  /{activeChurch.slug}/gestor
+                </span>
+                <span
+                  className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                    isChurchAdmin
+                      ? 'bg-[#EAF0EC] text-[#344E41] border border-[#344E41]/20'
+                      : 'bg-amber-100 text-amber-900 border border-amber-300'
+                  }`}
+                >
+                  Nível: {isChurchAdmin ? 'Administrador' : 'Editor'}
+                </span>
+                {isCloudSynced && (
+                  <span className="text-[10px] bg-sky-100 text-sky-900 font-bold px-2.5 py-0.5 rounded-full">
+                    Firestore Ativo
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-stone-500">
+                Conectado como <strong>{platformUser?.name || firebaseUser.email}</strong> ({firebaseUser.email})
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+            <button
+              type="button"
+              onClick={() => setCurrentView('home')}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Abrir App da Igreja</span>
+            </button>
+
+            {isPlatformOwner && (
+              <button
+                type="button"
+                onClick={() => setCurrentView('admin')}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold flex items-center gap-1.5 border border-amber-300"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Painel Owner (/admin)</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={pullLatestFromCloud}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-bold flex items-center gap-1.5 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5 text-[#344E41]" />
+              <span>Atualizar</span>
+            </button>
+
+            {isChurchAdmin && (
+              <button
+                type="button"
+                onClick={syncLocalDataToCloud}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Sincronizar</span>
+              </button>
+            )}
+
+            <button
+              onClick={managerLogout}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-rose-50 hover:text-rose-600 text-stone-600 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sair</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Seletor de Igreja (Permite alternar entre igrejas que o usuário ajuda ou cadastrar uma nova igreja) */}
+        <div className="pt-3 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 flex-1">
+            <span className="text-xs font-bold text-stone-600 flex items-center gap-1.5 shrink-0">
+              <Church className="w-4 h-4 text-[#344E41]" />
+              <span>Alternar Igreja Administrada ({managedChurches.length}):</span>
+            </span>
+            <select
+              value={activeChurch.slug}
+              onChange={(e) => selectChurchBySlug(e.target.value, 'manager')}
+              className="min-h-[38px] px-3 py-1.5 rounded-xl border border-stone-300 bg-stone-50 text-xs font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-[#344E41] max-w-md"
+            >
+              {managedChurches.map((ch) => (
+                <option key={ch.id} value={ch.slug}>
+                  {ch.name} ({ch.city}/{ch.state}) — /{ch.slug}
+                </option>
+              ))}
+              {!managedChurches.some((ch) => ch.id === activeChurch.id) && (
+                <option value={activeChurch.slug}>
+                  {activeChurch.name} ({activeChurch.city}/{activeChurch.state}) — /{activeChurch.slug}
+                </option>
+              )}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsCreatingAdditionalChurch(true)}
+            className="min-h-[38px] px-3.5 py-1.5 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-bold flex items-center gap-1.5 self-start sm:self-auto"
+          >
+            <Plus className="w-3.5 h-3.5 text-[#344E41]" />
+            <span>Cadastrar Nova Igreja</span>
           </button>
         </div>
       </div>
 
-      {/* Alert if there are pending manager requests waiting for Primary Owner approval */}
-      {isPrimaryOwner && pendingManagersCount > 0 && (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 font-bold">
-              {pendingManagersCount}
-            </div>
-            <div>
-              <h4 className="text-xs sm:text-sm font-bold text-amber-950">
-                Solicitação de Novo Gestor Aguardando Sua Liberação
-              </h4>
-              <p className="text-xs text-amber-800">
-                Há {pendingManagersCount} pessoa(s) aguardando sua permissão para ajudar na gestão da igreja.
-              </p>
+      {/* 2. Card de Divulgação Rápida: Link Direto (/{slug}), WhatsApp e QR Code (Requirement 5) */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-emerald-200/90 shadow-xs flex flex-col lg:flex-row items-center justify-between gap-6">
+        <div className="space-y-3 flex-1 w-full">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider bg-[#EAF0EC] text-[#344E41] px-2.5 py-1 rounded-full">
+              Link Direto &amp; QR Code da Igreja
+            </span>
+          </div>
+          <h2 className="text-base sm:text-lg font-bold text-stone-900">
+            Divulgue o aplicativo da sua igreja no boletim, telão e WhatsApp
+          </h2>
+          <p className="text-xs text-stone-600 leading-relaxed">
+            Qualquer membro que abrir o link abaixo ou ler o QR Code entra <strong>diretamente na {activeChurch.name}</strong> em modo leitura, sem precisar de login.
+          </p>
+
+          <div className="p-3 rounded-2xl bg-stone-50 border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <code className="text-xs sm:text-sm font-mono font-bold text-[#284136] break-all">
+              {churchShareUrl}
+            </code>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyShareLink}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                {copiedShareLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedShareLink ? 'Link Copiado!' : 'Copiar link de divulgação'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShareOnWhatsApp}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Compartilhar no WhatsApp</span>
+              </button>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab('team')}
-            className="min-h-[38px] px-4 py-2 rounded-xl bg-amber-900 hover:bg-amber-950 text-white text-xs font-bold shrink-0 self-start sm:self-auto"
-          >
-            Analisar Solicitações
-          </button>
         </div>
-      )}
 
-      {/* 2. Management Navigation Tabs */}
+        {/* QR Code Preview & Print/Download */}
+        {qrCodeDataUrl && (
+          <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 flex flex-col items-center gap-2.5 shrink-0">
+            <img
+              src={qrCodeDataUrl}
+              alt={`QR Code ${activeChurch.name}`}
+              className="w-28 h-28 rounded-xl border border-stone-200 bg-white p-1"
+            />
+            <div className="flex items-center gap-1.5">
+              <a
+                href={qrCodeDataUrl}
+                download={`qrcode-${activeChurch.slug}.png`}
+                className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-[11px] font-bold text-stone-700 flex items-center gap-1"
+              >
+                <QrCode className="w-3.5 h-3.5 text-[#344E41]" />
+                <span>Baixar PNG</span>
+              </a>
+              <button
+                type="button"
+                onClick={handlePrintQrCode}
+                className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[11px] font-bold text-[#344E41] flex items-center gap-1"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir p/ Telão</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Management Navigation Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
         {[
-          { id: 'info', label: 'Informações da Igreja', icon: <Church className="w-4 h-4" /> },
+          ...(isChurchAdmin
+            ? [{ id: 'info', label: 'Informações da Igreja', icon: <Church className="w-4 h-4" /> }]
+            : []),
           { id: 'bulletins', label: 'Boletins', count: bulletins.length, icon: <FileText className="w-4 h-4" /> },
           { id: 'deacons', label: 'Escala de Diáconos', count: deaconSchedules.length, icon: <ClipboardList className="w-4 h-4" /> },
           { id: 'birthdays', label: 'Aniversariantes', count: birthdays.length, icon: <CalendarHeart className="w-4 h-4" /> },
           { id: 'banners', label: 'Banners', count: banners.length, icon: <ImageIcon className="w-4 h-4" /> },
-          { id: 'team', label: 'Gestores & Acessos', count: pendingManagersCount || allManagers.length, icon: <Users className="w-4 h-4" /> },
-          { id: 'settings', label: 'Configurações & Vercel', icon: <Settings className="w-4 h-4" /> }
+          ...(isChurchAdmin
+            ? [
+                {
+                  id: 'team',
+                  label: 'Equipe',
+                  count: activeChurch.teamMembers?.length || activeChurch.managerEmails?.length || 1,
+                  icon: <Users className="w-4 h-4" />
+                },
+                { id: 'settings', label: 'Backup & Vercel', icon: <Settings className="w-4 h-4" /> }
+              ]
+            : [])
         ].map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -1201,14 +1955,14 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         })}
       </div>
 
-      {/* 3. TAB 1: INFORMAÇÕES DA IGREJA */}
+      {/* TAB 1: INFORMAÇÕES DA IGREJA */}
       {activeTab === 'info' && (
         <div className="space-y-6">
           <form onSubmit={handleSaveChurchInfo} className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-6">
             <div className="flex items-center justify-between pb-4 border-b border-stone-100">
               <div>
                 <h3 className="font-bold text-stone-900 text-lg">Dados Principais da Igreja</h3>
-                <p className="text-xs text-stone-500">Alterações são refletidas automaticamente para os usuários.</p>
+                <p className="text-xs text-stone-500">Alterações sincronizam em tempo real com os membros da igreja.</p>
               </div>
               <button
                 type="submit"
@@ -1223,22 +1977,29 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             <div className="p-4 sm:p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-[#344E41] border-2 border-stone-200 shadow-xs flex items-center justify-center text-white shrink-0">
+                  <div
+                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-2 border-stone-200 shadow-xs flex items-center justify-center text-white shrink-0"
+                    style={{ backgroundColor: themeColorInput || '#344E41' }}
+                  >
                     {infoForm.logoUrl ? (
                       <img src={infoForm.logoUrl} alt="Logo da Igreja" className="w-full h-full object-cover" />
                     ) : (
-                      <span className="font-serif font-bold text-2xl">IPC</span>
+                      <Church className="w-8 h-8 text-white" />
                     )}
                   </div>
                   <div className="space-y-1">
                     <h4 className="font-bold text-stone-900 text-sm">Logotipo da Igreja</h4>
                     <p className="text-xs text-stone-500">
-                      Exibido no cabeçalho do aplicativo, rodapé e nos documentos oficiais.
+                      Exibido na lista de igrejas, no topo do app e no rodapé.
                     </p>
                     {infoForm.logoUrl && (
                       <button
                         type="button"
-                        onClick={() => setInfoForm({ ...infoForm, logoUrl: '' })}
+                        onClick={() => {
+                          const next = { ...infoForm, logoUrl: '' };
+                          setInfoForm(next);
+                          updateChurchInfo(next);
+                        }}
                         className="text-[11px] text-rose-600 hover:underline font-semibold"
                       >
                         Remover logotipo atual
@@ -1247,23 +2008,28 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   </div>
                 </div>
 
-                <div className="space-y-2 self-start sm:self-auto">
-                  <label className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs flex items-center gap-2 cursor-pointer shadow-xs transition-colors">
-                    <Upload className="w-4 h-4" />
-                    <span>Fazer Upload da Logo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) =>
-                        handleFileUpload(e, (b64) => setInfoForm({ ...infoForm, logoUrl: b64 }))
-                      }
-                      className="hidden"
-                    />
-                  </label>
-                </div>
+                <label className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs flex items-center gap-2 cursor-pointer shadow-xs transition-colors self-start sm:self-auto">
+                  <Upload className="w-4 h-4" />
+                  <span>Fazer Upload da Logo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) =>
+                      handleFileUpload(
+                        e,
+                        (b64) => {
+                          const next = { ...infoForm, logoUrl: b64 };
+                          setInfoForm(next);
+                          updateChurchInfo(next);
+                        },
+                        500
+                      )
+                    }
+                    className="hidden"
+                  />
+                </label>
               </div>
 
-              {/* URL alternativa */}
               <div className="pt-2 border-t border-stone-200/60">
                 <label className="block text-[11px] font-bold text-stone-600 mb-1">
                   Ou insira o link direto (URL) da imagem da logo:
@@ -1272,9 +2038,97 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.logoUrl}
                   onChange={(e) => setInfoForm({ ...infoForm, logoUrl: e.target.value })}
-                  placeholder="https://exemplo.com/minha-logo.png"
-                  className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  placeholder="https://..."
+                  className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white"
                 />
+              </div>
+            </div>
+
+            {/* Slug, Cor do Tema e Cidade/UF */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-stone-50 border border-stone-200/80">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Slug (Link Direto da Igreja)
+                </label>
+                <div className="flex items-center rounded-xl border border-stone-300 bg-white overflow-hidden">
+                  <span className="px-2.5 text-xs text-stone-400 font-mono bg-stone-100 py-2.5 border-r border-stone-200">
+                    /
+                  </span>
+                  <input
+                    type="text"
+                    value={slugInput}
+                    onChange={(e) => setSlugInput(slugifyChurchName(e.target.value))}
+                    className="w-full p-2 text-xs font-mono focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Cidade *</label>
+                <input
+                  type="text"
+                  required
+                  value={cityInput}
+                  onChange={(e) => setCityInput(e.target.value)}
+                  placeholder="Cidade da igreja"
+                  className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">UF (Estado) *</label>
+                <input
+                  type="text"
+                  required
+                  maxLength={2}
+                  value={stateInput}
+                  onChange={(e) => setStateInput(e.target.value.toUpperCase())}
+                  placeholder="SE"
+                  className="w-full p-2 text-xs uppercase rounded-xl border border-stone-300 bg-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center gap-1.5">
+                  <Palette className="w-3.5 h-3.5 text-[#344E41]" />
+                  <span>Cor do Tema da Igreja</span>
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {PRESET_THEME_COLORS.map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      onClick={() => setThemeColorInput(c.hex)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 border ${
+                        themeColorInput === c.hex
+                          ? 'border-stone-900 bg-white text-stone-900'
+                          : 'border-stone-200 bg-white text-stone-600'
+                      }`}
+                    >
+                      <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: c.hex }} />
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                  <input
+                    type="color"
+                    value={themeColorInput}
+                    onChange={(e) => setThemeColorInput(e.target.value)}
+                    className="w-8 h-8 rounded-lg border border-stone-300 cursor-pointer bg-white p-0.5"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleCaptureGpsForChurch(false)}
+                  className="min-h-[38px] px-3 py-2 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-xs font-semibold text-[#344E41] flex items-center justify-center gap-1.5"
+                >
+                  <Navigation className="w-3.5 h-3.5" />
+                  <span>
+                    {latInput !== undefined ? 'Atualizar GPS' : 'Salvar GPS p/ Proximidade'}
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -1286,7 +2140,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   required
                   value={infoForm.name}
                   onChange={(e) => setInfoForm({ ...infoForm, name: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
@@ -1296,7 +2150,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.tagline}
                   onChange={(e) => setInfoForm({ ...infoForm, tagline: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
             </div>
@@ -1308,17 +2162,17 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   rows={4}
                   value={infoForm.aboutHistory}
                   onChange={(e) => setInfoForm({ ...infoForm, aboutHistory: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Missão & Declaração de Fé</label>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Missão &amp; Declaração de Fé</label>
                 <textarea
                   rows={4}
                   value={infoForm.missionVision}
                   onChange={(e) => setInfoForm({ ...infoForm, missionVision: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
             </div>
@@ -1330,27 +2184,17 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.address}
                   onChange={(e) => setInfoForm({ ...infoForm, address: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Cidade, Estado e CEP</label>
-                <input
-                  type="text"
-                  value={infoForm.cityStateZip}
-                  onChange={(e) => setInfoForm({ ...infoForm, cityStateZip: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Link do Google Maps</label>
+                <label className="block text-xs font-bold text-stone-700 mb-1">Link do Google Maps (Opcional)</label>
                 <input
                   type="text"
                   value={infoForm.googleMapsUrl}
                   onChange={(e) => setInfoForm({ ...infoForm, googleMapsUrl: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
@@ -1360,18 +2204,20 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.whatsappNumber}
                   onChange={(e) => setInfoForm({ ...infoForm, whatsappNumber: e.target.value })}
-                  placeholder="5511999887766"
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  placeholder="Ex: 5579999999999"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Telefone Principal</label>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Telefone Principal (O botão Ligar só aparece se preenchido)
+                </label>
                 <input
                   type="text"
                   value={infoForm.primaryPhone}
                   onChange={(e) => setInfoForm({ ...infoForm, primaryPhone: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
 
@@ -1381,7 +2227,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="email"
                   value={infoForm.email}
                   onChange={(e) => setInfoForm({ ...infoForm, email: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
             </div>
@@ -1393,7 +2239,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.instagramUrl}
                   onChange={(e) => setInfoForm({ ...infoForm, instagramUrl: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
               <div>
@@ -1402,7 +2248,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.youtubeUrl}
                   onChange={(e) => setInfoForm({ ...infoForm, youtubeUrl: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
               <div>
@@ -1411,7 +2257,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   type="text"
                   value={infoForm.facebookUrl}
                   onChange={(e) => setInfoForm({ ...infoForm, facebookUrl: e.target.value })}
-                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300 focus:ring-2 focus:ring-[#344E41] focus:outline-none"
+                  className="w-full p-2.5 text-sm rounded-xl border border-stone-300"
                 />
               </div>
             </div>
@@ -1419,58 +2265,101 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
 
           {/* Gerenciar Horários de Cultos */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-4">
-            <h3 className="font-bold text-stone-900 text-lg flex items-center gap-2">
-              <Clock className="w-5 h-5 text-[#344E41]" />
-              <span>Gerenciar Horários de Cultos e Programações</span>
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="font-bold text-stone-900 text-lg flex items-center gap-2">
+                <Clock className="w-5 h-5 text-[#344E41]" />
+                <span>Horários de Cultos e Programações ({infoForm.schedules.length})</span>
+              </h3>
+              <span className="text-[11px] font-semibold text-emerald-800 bg-[#EAF0EC] px-2.5 py-1 rounded-full">
+                Subcoleção cultos sincronizada
+              </span>
+            </div>
 
-            {/* Existing schedules */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {infoForm.schedules.map((sch) => (
-                <div key={sch.id} className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 flex items-start justify-between gap-3">
-                  <div>
+                <div
+                  key={sch.id}
+                  className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 transition-colors ${
+                    editingScheduleId === sch.id
+                      ? 'bg-[#EAF0EC]/60 border-[#344E41]'
+                      : 'bg-stone-50 border-stone-200'
+                  }`}
+                >
+                  <div className="min-w-0">
                     <span className="font-bold text-xs text-[#344E41]">
                       {sch.day} às {sch.time}
                     </span>
                     <h4 className="font-bold text-sm text-stone-900 mt-0.5">{sch.title}</h4>
                     <p className="text-xs text-stone-500">{sch.description}</p>
+                    {sch.location && (
+                      <p className="text-[11px] text-stone-400 mt-0.5">Local: {sch.location}</p>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSchedule(sch.id)}
-                    className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                    title="Excluir horário"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleEditSchedule(sch)}
+                      className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-200"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSchedule(sch.id)}
+                      className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
 
-            {/* Add schedule sub-form */}
             <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200/80 space-y-3">
-              <span className="text-xs font-bold text-stone-700 block">Adicionar Novo Horário de Culto</span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-stone-700 block">
+                  {editingScheduleId ? 'Editando Horário de Culto' : 'Adicionar Novo Horário de Culto'}
+                </span>
+                {editingScheduleId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingScheduleId(null);
+                      setNewSchedule({
+                        day: 'Domingo',
+                        time: '19h00',
+                        title: '',
+                        description: '',
+                        location: 'Templo Principal'
+                      });
+                    }}
+                    className="text-xs text-rose-600 hover:underline font-semibold"
+                  >
+                    Cancelar edição
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <input
                   type="text"
                   placeholder="Dia (ex: Domingo)"
                   value={newSchedule.day}
                   onChange={(e) => setNewSchedule({ ...newSchedule, day: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
+                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
                 <input
                   type="text"
                   placeholder="Horário (ex: 19h30)"
                   value={newSchedule.time}
                   onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
+                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
                 <input
                   type="text"
-                  placeholder="Título (ex: Culto de Oração)"
+                  placeholder="Título (ex: Culto Dominical)"
                   value={newSchedule.title}
                   onChange={(e) => setNewSchedule({ ...newSchedule, title: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
+                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1479,123 +2368,243 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   placeholder="Descrição breve..."
                   value={newSchedule.description}
                   onChange={(e) => setNewSchedule({ ...newSchedule, description: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
+                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
                 <input
                   type="text"
                   placeholder="Local (ex: Templo Principal)"
                   value={newSchedule.location}
                   onChange={(e) => setNewSchedule({ ...newSchedule, location: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
+                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
               </div>
               <button
                 type="button"
                 onClick={handleAddSchedule}
-                className="px-4 py-2 rounded-xl bg-[#344E41] text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-[#284136]"
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] text-white text-xs font-bold flex items-center gap-1.5 hover:bg-[#284136] transition-colors"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Adicionar à Lista de Cultos</span>
+                {editingScheduleId ? <Save className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                <span>
+                  {editingScheduleId ? 'Salvar Alterações do Horário' : 'Adicionar e Salvar Horário'}
+                </span>
               </button>
             </div>
           </div>
 
           {/* Gerenciar Pastores e Liderança */}
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-4">
-            <h3 className="font-bold text-stone-900 text-lg flex items-center gap-2">
-              <Users className="w-5 h-5 text-[#344E41]" />
-              <span>Gerenciar Pastores e Liderança</span>
-            </h3>
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-stone-900 text-lg flex items-center gap-2">
+                  <Users className="w-5 h-5 text-[#344E41]" />
+                  <span>Pastores e Liderança ({infoForm.leadership.length})</span>
+                </h3>
+                <p className="text-xs text-stone-500">
+                  Subcoleção <code>lideranca</code> sincronizada com o banco de dados.
+                </p>
+              </div>
+            </div>
 
-            {/* Existing leaders */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
               {infoForm.leadership.map((l) => (
-                <div key={l.id} className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img src={l.photoUrl} alt={l.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-xs text-stone-900 truncate">{l.name}</h4>
-                      <p className="text-[11px] text-stone-500 truncate">{l.role}</p>
+                <div
+                  key={l.id}
+                  className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 transition-all ${
+                    editingLeaderId === l.id
+                      ? 'bg-[#EAF0EC]/60 border-[#344E41] ring-1 ring-[#344E41]/30'
+                      : 'bg-stone-50 border-stone-200'
+                  }`}
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="relative shrink-0">
+                      {l.photoUrl ? (
+                        <img
+                          src={l.photoUrl}
+                          alt={l.name}
+                          className="w-14 h-14 rounded-2xl object-cover border-2 border-white shadow-2xs"
+                        />
+                      ) : (
+                        <div className="w-14 h-14 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center font-bold text-lg">
+                          {l.name.charAt(0)}
+                        </div>
+                      )}
+                      <label
+                        className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#344E41] hover:bg-[#284136] text-white flex items-center justify-center cursor-pointer shadow-xs"
+                        title="Fazer upload de nova foto"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) =>
+                            handleFileUpload(e, (b64) => handleQuickLeaderPhotoUpload(l.id, b64), 500)
+                          }
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-bold text-xs sm:text-sm text-stone-900 truncate">{l.name}</h4>
+                      <p className="text-[11px] font-semibold text-[#344E41] truncate">{l.role}</p>
+                      {l.phone && <p className="text-[11px] text-stone-500 truncate mt-0.5">{l.phone}</p>}
+                      {l.bio && <p className="text-[11px] text-stone-500 line-clamp-2 mt-1">{l.bio}</p>}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveLeader(l.id)}
-                    className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200 shrink-0"
-                    title="Excluir líder"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+
+                  <div className="pt-2.5 border-t border-stone-200/70 flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleEditLeader(l)}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-[11px] font-bold flex items-center gap-1"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      <span>Editar</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveLeader(l.id)}
+                      className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200 shrink-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
 
-            {/* Add leader subform */}
-            <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200/80 space-y-3">
-              <span className="text-xs font-bold text-stone-700 block">Cadastrar Novo Líder</span>
+            {/* Add / Edit leader subform */}
+            <div className="p-5 bg-stone-50 rounded-2xl border border-stone-200/80 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-stone-800 block">
+                  {editingLeaderId ? 'Editar Dados do Líder' : 'Cadastrar Novo Líder'}
+                </span>
+                {editingLeaderId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingLeaderId(null);
+                      setNewLeader({ name: '', role: '', bio: '', photoUrl: '', phone: '', email: '' });
+                    }}
+                    className="text-xs font-bold text-rose-600 hover:underline"
+                  >
+                    Cancelar edição
+                  </button>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl bg-white border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-16 h-16 rounded-2xl overflow-hidden bg-[#EAF0EC] border-2 border-stone-200 flex items-center justify-center shrink-0">
+                    {newLeader.photoUrl ? (
+                      <img src={newLeader.photoUrl} alt="Líder" className="w-full h-full object-cover" />
+                    ) : (
+                      <Users className="w-6 h-6 text-[#344E41]" />
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs font-bold text-stone-900 block">Foto do Pastor / Líder</span>
+                    <p className="text-[11px] text-stone-500">Envie do seu dispositivo ou cole uma URL.</p>
+                  </div>
+                </div>
+
+                <label className="min-h-[40px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-2 cursor-pointer self-start sm:self-auto">
+                  <Upload className="w-4 h-4" />
+                  <span>Fazer Upload da Foto</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) =>
+                      handleFileUpload(e, (b64) => setNewLeader((prev) => ({ ...prev, photoUrl: b64 })), 500)
+                    }
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  placeholder="Nome completo (ex: Rev. Paulo Silveira)"
-                  value={newLeader.name}
-                  onChange={(e) => setNewLeader({ ...newLeader, name: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="Cargo / Função (ex: Pastor Titular)"
-                  value={newLeader.role}
-                  onChange={(e) => setNewLeader({ ...newLeader, role: e.target.value })}
-                  className="p-2 text-xs rounded-lg border border-stone-300 bg-white"
-                />
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Nome Completo *</label>
+                  <input
+                    type="text"
+                    placeholder="Nome do Pastor, Presbítero ou Diácono"
+                    value={newLeader.name || ''}
+                    onChange={(e) => setNewLeader({ ...newLeader, name: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">Cargo / Função *</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Pastor Titular / Presbítero / Diácono"
+                    value={newLeader.role || ''}
+                    onChange={(e) => setNewLeader({ ...newLeader, role: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                    Telefone / WhatsApp (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={newLeader.phone || ''}
+                    onChange={(e) => setNewLeader({ ...newLeader, phone: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-700 mb-1">E-mail (Opcional)</label>
+                  <input
+                    type="email"
+                    value={newLeader.email || ''}
+                    onChange={(e) => setNewLeader({ ...newLeader, email: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-stone-600 mb-1">
-                  Foto do Líder (Upload com compressão automática)
+                <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                  Biografia / Ministério (Opcional)
                 </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleFileUpload(e, (b64) => setNewLeader({ ...newLeader, photoUrl: b64 }))}
-                  className="text-xs text-stone-500"
+                <textarea
+                  rows={2}
+                  value={newLeader.bio || ''}
+                  onChange={(e) => setNewLeader({ ...newLeader, bio: e.target.value })}
+                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
                 />
               </div>
-
-              <textarea
-                rows={2}
-                placeholder="Breve biografia pastoral..."
-                value={newLeader.bio}
-                onChange={(e) => setNewLeader({ ...newLeader, bio: e.target.value })}
-                className="w-full p-2 text-xs rounded-lg border border-stone-300 bg-white"
-              />
 
               <button
                 type="button"
                 onClick={handleAddLeader}
-                className="px-4 py-2 rounded-xl bg-[#344E41] text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-[#284136]"
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#344E41] text-white text-xs font-bold flex items-center gap-2 hover:bg-[#284136]"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Adicionar Líder</span>
+                {editingLeaderId ? <Save className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                <span>{editingLeaderId ? 'Salvar Alterações do Líder' : 'Adicionar Líder e Salvar'}</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. TAB 2: BOLETINS */}
+      {/* TAB 2: BOLETINS */}
       {activeTab === 'bulletins' && (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-stone-100">
             <div>
               <h3 className="font-bold text-stone-900 text-lg">Gerenciar Boletins Informativos</h3>
               <p className="text-xs text-stone-500">
-                Publique boletins em PDF ou escreva diretamente com o editor de liturgia e palavra pastoral.
+                Subcoleção <code>boletins</code> da igreja. O card de destaque exibe sempre boletins atuais/futuros.
               </p>
             </div>
             <button
               onClick={() => handleOpenBulletinModal()}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 self-start sm:self-auto transition-colors shadow-xs"
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 self-start sm:self-auto"
             >
               <Plus className="w-4 h-4" />
               <span>Novo Boletim</span>
@@ -1626,14 +2635,27 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   </div>
                   <h4 className="font-bold text-stone-900 text-base leading-snug">{b.title}</h4>
                   <p className="text-xs text-stone-600 line-clamp-1">{b.summary || b.pastoralWord}</p>
+                  {(b.updatedByName || b.createdByName || b.updatedByEmail || b.createdByEmail) && (
+                    <p className="text-[11px] text-stone-400 pt-0.5">
+                      Publicado/editado por:{' '}
+                      <strong className="text-stone-600">
+                        {b.updatedByName || b.createdByName || b.updatedByEmail || b.createdByEmail}
+                      </strong>
+                      {b.updatedAt && (
+                        <span>
+                          {' '}
+                          em {new Date(b.updatedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </span>
+                      )}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   {!b.isCurrent && (
                     <button
                       onClick={() => setCurrentBulletin(b.id)}
-                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-800 transition-colors"
-                      title="Definir esta edição como o destaque atual"
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-800"
                     >
                       Tornar Atual
                     </button>
@@ -1641,14 +2663,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   <button
                     onClick={() => setSelectedBulletinForReader(b)}
                     className="p-2 text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                    title="Pré-visualizar boletim"
                   >
                     <Eye className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleOpenBulletinModal(b)}
                     className="p-2 text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                    title="Editar boletim"
                   >
                     <Edit2 className="w-4 h-4" />
                   </button>
@@ -1656,13 +2676,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     onClick={() =>
                       askConfirmation({
                         title: 'Excluir Boletim?',
-                        message: `Tem certeza que deseja remover o boletim "${b.title}"? Esta ação não pode ser desfeita.`,
+                        message: `Tem certeza que deseja remover o boletim "${b.title}"?`,
                         isDestructive: true,
                         onConfirm: () => deleteBulletin(b.id)
                       })
                     }
                     className="p-2 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                    title="Excluir boletim"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -1673,27 +2692,27 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         </div>
       )}
 
-      {/* 5. TAB 3: ANIVERSARIANTES */}
+      {/* TAB 3: ANIVERSARIANTES */}
       {activeTab === 'birthdays' && (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
             <div>
               <h3 className="font-bold text-stone-900 text-lg">Gerenciar Aniversariantes</h3>
               <p className="text-xs text-stone-500">
-                Cadastre membros individualmente ou importe a lista completa via planilha CSV.
+                Subcoleção <code>aniversariantes</code> da igreja.
               </p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setCsvModalOpen(true)}
-                className="min-h-[42px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                className="min-h-[42px] px-3.5 py-2 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 font-bold text-xs flex items-center gap-1.5"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
                 <span>Importar CSV</span>
               </button>
               <button
                 onClick={() => handleOpenBirthdayModal()}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow-xs"
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" />
                 <span>Cadastrar Pessoa</span>
@@ -1701,7 +2720,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </div>
           </div>
 
-          {/* Birthdays Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-stone-700">
               <thead className="bg-stone-50 text-stone-500 font-bold uppercase text-[10px] tracking-wider border-b border-stone-200">
@@ -1718,15 +2736,41 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   <tr key={person.id} className="hover:bg-stone-50/60">
                     <td className="p-3">
                       <div className="flex items-center gap-2.5">
-                        <img
-                          src={
-                            person.photoUrl ||
-                            'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&q=80'
-                          }
-                          alt={person.name}
-                          className="w-8 h-8 rounded-full object-cover shrink-0"
-                        />
-                        <span className="font-bold text-stone-900">{person.name}</span>
+                        <div className="relative shrink-0">
+                          {person.photoUrl ? (
+                            <img
+                              src={person.photoUrl}
+                              alt={person.name}
+                              className="w-9 h-9 rounded-full object-cover border border-stone-200"
+                            />
+                          ) : (
+                            <div className="w-9 h-9 rounded-full bg-[#EAF0EC] text-[#344E41] font-bold flex items-center justify-center">
+                              {person.name.charAt(0)}
+                            </div>
+                          )}
+                          <label
+                            className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#344E41] text-white flex items-center justify-center cursor-pointer"
+                            title="Enviar foto"
+                          >
+                            <Upload className="w-2.5 h-2.5" />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                handleFileUpload(e, (b64) => updateBirthday(person.id, { photoUrl: b64 }), 450)
+                              }
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                        <div>
+                          <span className="font-bold text-stone-900 block">{person.name}</span>
+                          {(person.updatedByName || person.createdByName || person.updatedByEmail || person.createdByEmail) && (
+                            <span className="text-[10px] text-stone-400 block">
+                              Por: {person.updatedByName || person.createdByName || person.updatedByEmail || person.createdByEmail}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="p-3 font-semibold text-stone-800">
@@ -1740,7 +2784,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                       <button
                         onClick={() => handleOpenBirthdayModal(person)}
                         className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                        title="Editar"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
@@ -1754,7 +2797,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           })
                         }
                         className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                        title="Excluir"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1767,26 +2809,25 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         </div>
       )}
 
-      {/* 6. TAB 4: BANNERS */}
+      {/* TAB 4: BANNERS */}
       {activeTab === 'banners' && (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
             <div>
               <h3 className="font-bold text-stone-900 text-lg">Banners de Divulgação</h3>
               <p className="text-xs text-stone-500">
-                Configure banners para as 3 posições fixas: TOPO (acima do header), MEIO e RODAPÉ.
+                Subcoleção <code>banners</code> da igreja (TOPO, MEIO e RODAPÉ).
               </p>
             </div>
             <button
               onClick={() => handleOpenBannerModal()}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 self-start sm:self-auto transition-colors shadow-xs"
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 self-start sm:self-auto"
             >
               <Plus className="w-4 h-4" />
               <span>Novo Banner</span>
             </button>
           </div>
 
-          {/* Banners grouped by position */}
           {(['topo', 'meio', 'rodape'] as BannerPosition[]).map((pos) => {
             const list = banners.filter((b) => b.position === pos).sort((a, b) => a.order - b.order);
             const posLabels = {
@@ -1799,16 +2840,13 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               <div key={pos} className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-xs uppercase tracking-wider text-stone-700">
-                    {posLabels[pos]} ({list.length} banner{list.length !== 1 ? 's' : ''})
+                    {posLabels[pos]} ({list.length})
                   </h4>
-                  <span className="text-[11px] text-stone-400">
-                    {list.length > 1 ? 'Rotação automática ativa' : 'Exibição estática'}
-                  </span>
                 </div>
 
                 {list.length === 0 ? (
                   <p className="text-xs text-stone-400 italic py-2">
-                    Nenhum banner cadastrado nesta posição (o espaço fica oculto para o usuário).
+                    Nenhum banner cadastrado nesta posição.
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1830,8 +2868,10 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                               Ordem: {ban.order} · {ban.isActive ? 'Ativo' : 'Inativo'}
                             </span>
                             <h5 className="font-bold text-xs text-stone-900 truncate">{ban.title}</h5>
-                            {ban.linkUrl && (
-                              <p className="text-[10px] text-emerald-700 truncate">{ban.linkUrl}</p>
+                            {(ban.updatedByName || ban.createdByName || ban.updatedByEmail || ban.createdByEmail) && (
+                              <span className="text-[10px] text-stone-400 block truncate">
+                                Por: {ban.updatedByName || ban.createdByName || ban.updatedByEmail || ban.createdByEmail}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -1840,12 +2880,9 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           <button
                             type="button"
                             onClick={() => toggleBannerActive(ban.id)}
-                            className={`px-2 py-1 text-[11px] font-bold rounded-lg transition-colors ${
-                              ban.isActive
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-stone-200 text-stone-600'
+                            className={`px-2 py-1 text-[11px] font-bold rounded-lg ${
+                              ban.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-600'
                             }`}
-                            title="Alternar Ativo/Inativo"
                           >
                             {ban.isActive ? 'Ligado' : 'Desligado'}
                           </button>
@@ -1853,7 +2890,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                             type="button"
                             onClick={() => handleOpenBannerModal(ban)}
                             className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-100"
-                            title="Editar banner"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -1868,7 +2904,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                               })
                             }
                             className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-100"
-                            title="Excluir banner"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1883,389 +2918,202 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         </div>
       )}
 
-      {/* 7. TAB 5: CONFIGURAÇÕES & API DA BÍBLIA */}
-      {activeTab === 'settings' && (
-        <div className="space-y-6">
-          <form onSubmit={handleSaveSettings} className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
-              <div>
-                <h3 className="font-bold text-stone-900 text-lg">Configurações Gerais & API da Bíblia</h3>
-                <p className="text-xs text-stone-500">
-                  Gerencie chaves, versões bíblicas e credenciais do gestor.
-                </p>
-              </div>
-              <button
-                type="submit"
-                className="min-h-[44px] px-5 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 shadow-xs transition-colors"
-              >
-                <Save className="w-4 h-4" />
-                <span>Salvar Configurações</span>
-              </button>
-            </div>
+      {/* TAB 5: EQUIPE DO GESTOR (ADMINISTRADORES E EDITORES) */}
+      {activeTab === 'team' && isChurchAdmin && (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-6">
+          <div className="space-y-1 pb-4 border-b border-stone-100">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-full inline-block">
+              Equipe da Igreja
+            </span>
+            <h3 className="font-bold text-stone-900 text-lg">
+              Equipe &amp; Permissões de Publicação ({activeChurch.name})
+            </h3>
+            <p className="text-xs text-stone-500 leading-relaxed">
+              Adicione outras pessoas por e-mail para ajudar na publicação da igreja. Quando o convidado criar a conta com o mesmo e-mail (ou entrar com Google), ele ganha acesso automaticamente a esta igreja.
+            </p>
+          </div>
 
-            {/* Bible API Section */}
-            <div className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-4">
+          {/* Explicação dos Níveis */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-4 rounded-2xl bg-[#EAF0EC]/60 border border-[#344E41]/20 space-y-1">
               <div className="flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-[#344E41]" />
-                <h4 className="font-bold text-sm text-stone-900">Integração com a API da Bíblia</h4>
+                <ShieldCheck className="w-4 h-4 text-[#344E41]" />
+                <span className="font-bold text-xs text-[#284136] uppercase tracking-wider">
+                  Nível 1: Administrador
+                </span>
               </div>
               <p className="text-xs text-stone-600 leading-relaxed">
-                Você pode apontar para qualquer endpoint REST de Bíblia (por exemplo: <code>https://bible-api.com</code>, <code>https://www.abibliadigital.com.br/api</code>, ou sua API privada). Caso a API esteja indisponível ou sem chave, o aplicativo ativa automaticamente o acervo local em português.
+                Acesso total à igreja: pode gerenciar a equipe, editar dados institucionais, horários de culto, liderança, backup e também publicar conteúdos.
               </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">URL Base da API</label>
-                  <input
-                    type="text"
-                    value={settingsForm.bibleConfig.apiBaseUrl}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        bibleConfig: { ...settingsForm.bibleConfig, apiBaseUrl: e.target.value }
-                      })
-                    }
-                    placeholder="https://bible-api.com"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Chave de API (Bearer Token / Se houver)</label>
-                  <input
-                    type="password"
-                    value={settingsForm.bibleConfig.apiKey}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        bibleConfig: { ...settingsForm.bibleConfig, apiKey: e.target.value }
-                      })
-                    }
-                    placeholder="Opcional se a API for pública"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Versão / Tradução da Bíblia</label>
-                  <input
-                    type="text"
-                    value={settingsForm.bibleConfig.versionName}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        bibleConfig: { ...settingsForm.bibleConfig, versionName: e.target.value }
-                      })
-                    }
-                    placeholder="ex: almeida, nvi, ra, arc"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Tempo Limite de Requisição (ms)</label>
-                  <input
-                    type="number"
-                    value={settingsForm.bibleConfig.requestTimeoutMs}
-                    onChange={(e) =>
-                      setSettingsForm({
-                        ...settingsForm,
-                        bibleConfig: { ...settingsForm.bibleConfig, requestTimeoutMs: Number(e.target.value) }
-                      })
-                    }
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
-                  />
-                </div>
-              </div>
             </div>
+            <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-1">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-amber-800" />
+                <span className="font-bold text-xs text-amber-900 uppercase tracking-wider">
+                  Nível 2: Editor
+                </span>
+              </div>
+              <p className="text-xs text-stone-600 leading-relaxed">
+                Pode criar, editar e publicar <strong>boletins, escalas de diáconos, aniversariantes e banners</strong>, mas não altera os dados da igreja nem a equipe.
+              </p>
+            </div>
+          </div>
 
-            {/* Manager Credentials */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">E-mail do Gestor</label>
+          {/* Invite by Email Form */}
+          <form onSubmit={handleInviteSubmit} className="p-4 sm:p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
+            <label className="block text-xs font-bold text-stone-800">
+              Convidar Membro para a Equipe por E-mail
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+              <div className="relative sm:col-span-6">
+                <Mail className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
-                  value={settingsForm.managerEmail}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, managerEmail: e.target.value })}
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
+                  required
+                  value={inviteEmailInput}
+                  onChange={(e) => setInviteEmailInput(e.target.value)}
+                  placeholder="email-do-colaborador@exemplo.com"
+                  className="w-full min-h-[44px] pl-10 pr-3 rounded-xl border border-stone-300 bg-white text-sm"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Nome do Aplicativo</label>
-                <input
-                  type="text"
-                  value={settingsForm.appName}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, appName: e.target.value })}
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white focus:ring-2 focus:ring-[#344E41]"
-                />
+              <div className="sm:col-span-3">
+                <select
+                  value={inviteRoleInput}
+                  onChange={(e) => setInviteRoleInput(e.target.value as 'admin' | 'editor')}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-stone-300 bg-white text-xs font-bold text-stone-800"
+                >
+                  <option value="editor">Nível: Editor</option>
+                  <option value="admin">Nível: Administrador</option>
+                </select>
+              </div>
+              <div className="sm:col-span-3">
+                <button
+                  type="submit"
+                  disabled={invitingManager}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center justify-center gap-2"
+                >
+                  <UserPlus className="w-4 h-4 shrink-0" />
+                  <span>{invitingManager ? 'Adicionando...' : 'Convidar p/ Equipe'}</span>
+                </button>
               </div>
             </div>
           </form>
 
-          {/* Vercel & Cloud Database Guide */}
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-base text-stone-900">
-                    Como Conectar sua Vercel ao Firebase (Passo a Passo)
-                  </h4>
-                  <p className="text-xs text-stone-500">
-                    Projeto Firebase ativo: <strong className="text-stone-800">{activeFirebaseConfig.projectId}</strong> &bull; Banco:{' '}
-                    <code className="font-mono text-[11px]">{activeFirebaseConfig.firestoreDatabaseId}</code>
-                  </p>
-                </div>
-              </div>
+          {/* List of Team Members & Pending Invites */}
+          <div className="space-y-3">
+            <h4 className="font-bold text-xs uppercase tracking-wider text-stone-500">
+              Membros da Equipe &amp; Convites ({activeChurch.teamMembers?.length || activeChurch.managerEmails?.length || 1})
+            </h4>
 
-              <button
-                type="button"
-                onClick={syncLocalDataToCloud}
-                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 transition-colors self-start sm:self-auto"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Sincronizar Dados Atuais para o Firebase</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-stone-600">
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <span className="font-bold text-stone-900 block">
-                  Passo 1: Atualizar o Deploy na Vercel
-                </span>
-                <p className="leading-relaxed">
-                  Como você subiu na Vercel <strong>antes</strong> de criar o banco de dados, basta atualizar o código no seu repositório GitHub conectado à Vercel (ou fazer um novo deploy). O código agora já inclui a conexão automática com o Firebase.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <span className="font-bold text-stone-900 block">
-                  Passo 2: Variáveis de Ambiente na Vercel
-                </span>
-                <p className="leading-relaxed">
-                  Na Vercel, vá em <strong>Settings &rarr; Environment Variables</strong>, clique no botão abaixo para copiar todas as chaves do Firebase e cole direto na Vercel (depois clique em <strong>Redeploy</strong>).
-                </p>
-                <button
-                  type="button"
-                  onClick={handleCopyVercelEnvVars}
-                  className="mt-1 min-h-[36px] px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs inline-flex items-center gap-1.5"
-                >
-                  {copiedEnvVars ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedEnvVars ? 'Variáveis Copiadas!' : 'Copiar Variáveis .env'}</span>
-                </button>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <span className="font-bold text-stone-900 block">
-                  Passo 3: Autorizar Domínio .vercel.app
-                </span>
-                <p className="leading-relaxed">
-                  Para o Login funcionar no endereço da Vercel, abra o Console do Firebase em{' '}
-                  <strong>Authentication &rarr; Settings &rarr; Authorized domains</strong> e adicione seu domínio{' '}
-                  <code>seu-projeto.vercel.app</code>.
-                </p>
-                <a
-                  href={`https://console.firebase.google.com/project/${activeFirebaseConfig.projectId}/authentication/settings`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[#344E41] underline pt-1"
-                >
-                  <span>Abrir Console do Firebase</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-stone-700">
-                  Variáveis prontas para colar na Vercel (Settings &rarr; Environment Variables):
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopyVercelEnvVars}
-                  className="text-xs font-bold text-[#344E41] hover:underline flex items-center gap-1"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{copiedEnvVars ? 'Copiado!' : 'Copiar tudo'}</span>
-                </button>
-              </div>
-              <pre className="p-3.5 rounded-2xl bg-stone-900 text-stone-100 font-mono text-[11px] overflow-x-auto leading-relaxed">
-                {vercelEnvBlock}
-              </pre>
-            </div>
-          </div>
-
-          {/* Backup & Export Area */}
-          <div className="bg-white rounded-3xl p-6 border border-stone-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h4 className="font-bold text-sm text-stone-900">Backup, Exportação e Migração de Dados</h4>
-              <p className="text-xs text-stone-500">
-                Exporte ou importe uma cópia JSON completa (informações da igreja, boletins, escala de diáconos, aniversariantes e banners) direto para o Firebase.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-              <label className="min-h-[44px] px-4 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] text-[#344E41] font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer">
-                <Upload className="w-4 h-4" />
-                <span>Importar Backup (JSON)</span>
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleImportBackupFile}
-                  className="hidden"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={handleExportBackup}
-                className="min-h-[44px] px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs flex items-center gap-2 transition-colors"
-              >
-                <Download className="w-4 h-4 text-[#344E41]" />
-                <span>Exportar Backup (JSON)</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB: GESTORES & CONTROLE DE ACESSO DA IGREJA (ANTI-DUPLICIDADE) */}
-      {activeTab === 'team' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
-              <div className="space-y-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-full inline-block">
-                  Proteção Contra Duplicidade de Igreja
-                </span>
-                <h3 className="font-bold text-stone-900 text-lg">
-                  Gestores &amp; Liberação de Acesso ({churchRegistry?.churchName || churchInfo.name})
-                </h3>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  O <strong>1º Gestor Principal</strong> detém a titularidade da igreja. Outras pessoas que se cadastrarem como gestores ficam com status <strong>Pendente</strong> e só conseguem acessar o painel se o 1º Gestor liberar abaixo.
-                </p>
-              </div>
-            </div>
-
-            {/* Titular / 1º Gestor Card */}
-            <div className="p-4 rounded-2xl bg-[#EAF0EC]/70 border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#344E41] text-white flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#344E41] block">
-                    1º Gestor Principal (Titular da Igreja)
-                  </span>
-                  <h4 className="font-bold text-sm text-stone-900">
-                    {churchRegistry?.ownerName || currentManagerAccount?.name || 'Gestor Principal'}
-                  </h4>
-                  <p className="text-xs text-stone-600 font-mono">
-                    {churchRegistry?.ownerEmail || currentManagerAccount?.email || settings.managerEmail}
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs font-bold text-emerald-900 bg-white px-3 py-1 rounded-full border border-emerald-200 self-start sm:self-auto">
-                Conta Matriz Verificada
-              </span>
-            </div>
-
-            {/* Lista de Todos os Gestores e Solicitações Pendentes */}
-            <div className="space-y-3">
-              <h4 className="font-bold text-xs uppercase tracking-wider text-stone-500">
-                Contas Vinculadas e Solicitações ({allManagers.length})
-              </h4>
-
-              {allManagers.length === 0 ? (
-                <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200 text-xs text-stone-500 text-center">
-                  Nenhuma outra solicitação de gestor registrada no momento.
-                </div>
-              ) : (
-                <div className="divide-y divide-stone-100 border border-stone-200 rounded-2xl overflow-hidden bg-white">
-                  {allManagers.map((mgr) => {
-                    const isOwnerRow = mgr.role === 'owner' || mgr.uid === churchRegistry?.ownerUid;
-                    return (
+            <div className="divide-y divide-stone-100 border border-stone-200 rounded-2xl overflow-hidden">
+              {(activeChurch.teamMembers && activeChurch.teamMembers.length > 0
+                ? activeChurch.teamMembers
+                : (activeChurch.managerEmails || [activeChurch.ownerEmail]).map((em) => ({
+                    email: em,
+                    name: undefined as string | undefined,
+                    role: 'admin' as const,
+                    status: em.toLowerCase() === activeChurch.ownerEmail?.toLowerCase() ? ('active' as const) : ('pending' as const),
+                    invitedAt: activeChurch.createdAt
+                  }))
+              ).map((member) => {
+                const isTitular = member.email.toLowerCase() === activeChurch.ownerEmail?.toLowerCase();
+                const isPending = member.status === 'pending' && !isTitular;
+                return (
+                  <div
+                    key={member.email}
+                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white hover:bg-stone-50/70"
+                  >
+                    <div className="flex items-start sm:items-center gap-3 min-w-0">
                       <div
-                        key={mgr.uid}
-                        className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-stone-50/70"
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                          member.role === 'admin' || isTitular
+                            ? 'bg-[#EAF0EC] text-[#344E41]'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
                       >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-sm text-stone-900">{mgr.name}</span>
-                            {isOwnerRow ? (
-                              <span className="text-[10px] font-bold uppercase bg-[#344E41] text-white px-2 py-0.5 rounded-full">
-                                1º Gestor (Titular)
-                              </span>
-                            ) : mgr.status === 'approved' ? (
-                              <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-                                Liberado pelo 1º Gestor
-                              </span>
-                            ) : mgr.status === 'pending' ? (
-                              <span className="text-[10px] font-bold uppercase bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full">
-                                Aguardando Liberação
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-bold uppercase bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full">
-                                Acesso Bloqueado
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-stone-500 font-mono">{mgr.email}</p>
-                        </div>
-
-                        {/* Actions only for Primary Owner on Co-Managers */}
-                        {!isOwnerRow && isPrimaryOwner && (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {mgr.status !== 'approved' && (
-                              <button
-                                type="button"
-                                onClick={() => approveOrRevokeManager(mgr.uid, 'approved')}
-                                className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>Liberar Acesso de Gestor</span>
-                              </button>
-                            )}
-
-                            {mgr.status === 'approved' && (
-                              <button
-                                type="button"
-                                onClick={() => approveOrRevokeManager(mgr.uid, 'revoked')}
-                                className="min-h-[36px] px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-semibold transition-colors"
-                              >
-                                Revogar Permissão
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                askConfirmation({
-                                  title: 'Remover Solicitação de Gestor?',
-                                  message: `Deseja excluir o cadastro de "${mgr.name}" (${mgr.email}) da lista de gestores da igreja?`,
-                                  isDestructive: true,
-                                  onConfirm: () => removePendingManager(mgr.uid)
-                                })
-                              }
-                              className="p-2 rounded-xl text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                              title="Excluir solicitação"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                        {member.role === 'admin' || isTitular ? (
+                          <ShieldCheck className="w-5 h-5" />
+                        ) : (
+                          <Edit2 className="w-4 h-4" />
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {member.name && (
+                            <span className="font-bold text-xs sm:text-sm text-stone-900">
+                              {member.name}
+                            </span>
+                          )}
+                          <span className="font-mono font-semibold text-xs text-stone-700 truncate">
+                            {member.email}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                              isPending
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {isPending ? 'Convite Pendente' : 'Ativo'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-500">
+                          {isTitular
+                            ? 'Criador / Administrador Titular da Igreja'
+                            : isPending
+                            ? 'Aguardando criar conta ou entrar com este e-mail para liberar automaticamente'
+                            : member.role === 'admin'
+                            ? 'Administrador (acesso total aos dados e equipe)'
+                            : 'Editor (publica boletins, escalas, aniversariantes e banners)'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!isTitular && (
+                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        <select
+                          value={member.role}
+                          onChange={(e) =>
+                            void updateTeamMemberRoleByEmail(
+                              member.email,
+                              e.target.value as 'admin' | 'editor'
+                            )
+                          }
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl border border-stone-300 bg-white text-xs font-bold text-stone-800"
+                        >
+                          <option value="admin">Administrador</option>
+                          <option value="editor">Editor</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            askConfirmation({
+                              title: 'Remover da Equipe?',
+                              message: `Deseja remover o acesso de "${member.email}" nesta igreja?`,
+                              confirmLabel: 'Sim, Remover',
+                              isDestructive: true,
+                              onConfirm: () => {
+                                void removeCoManagerEmail(member.email);
+                              }
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Remover</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB: ESCALA DE DIÁCONOS */}
+      {/* TAB 6: ESCALA DE DIÁCONOS */}
       {activeTab === 'deacons' && (
         <div className="space-y-4">
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-5">
@@ -2273,23 +3121,19 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               <div>
                 <h3 className="font-bold text-stone-900 text-lg">Gerenciar Escala da Junta Diaconal</h3>
                 <p className="text-xs text-stone-500">
-                  Padrão oficial: <strong>1ª Semana (Semana de Oração)</strong>,{' '}
-                  <strong>Quintas-feiras (Culto de Estudo e Oração)</strong>,{' '}
-                  <strong>Domingos (Manhã e Noite)</strong> e{' '}
-                  <strong>Espaço Reservado para Eventos</strong>.
+                  Subcoleção <code>escalas</code> da igreja. O card de &ldquo;Próximo plantão&rdquo; ignora datas passadas.
                 </p>
               </div>
 
               <button
                 onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_manha')}
-                className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs flex items-center gap-2 self-start sm:self-auto shadow-xs transition-colors"
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs flex items-center gap-2 self-start sm:self-auto"
               >
                 <Plus className="w-4 h-4" />
                 <span>Nova Escala Diaconal</span>
               </button>
             </div>
 
-            {/* Botões Rápidos por Modalidade da Escala */}
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-2.5">
               <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500 block">
                 Atalhos Rápidos para Criar Escala por Modalidade:
@@ -2298,42 +3142,41 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 <button
                   type="button"
                   onClick={() => handleOpenDeaconModal(undefined, false, 'semana_oracao')}
-                  className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold"
                 >
                   + 1ª Semana (Semana de Oração)
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenDeaconModal(undefined, false, 'quinta_estudo')}
-                  className="px-3 py-1.5 rounded-xl bg-[#EAF0EC] hover:bg-[#d8e5dd] text-[#284136] text-xs font-bold transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-[#EAF0EC] hover:bg-[#d8e5dd] text-[#284136] text-xs font-bold"
                 >
                   + Quinta-feira (Estudo e Oração)
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_manha')}
-                  className="px-3 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-950 text-xs font-bold transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-950 text-xs font-bold"
                 >
                   + Domingo pela Manhã (Culto)
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_noite')}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-950 text-xs font-bold transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-950 text-xs font-bold"
                 >
                   + Domingo à Noite (Culto)
                 </button>
                 <button
                   type="button"
                   onClick={() => handleOpenDeaconModal(undefined, false, 'evento_especial')}
-                  className="px-3 py-1.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-xs font-bold transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-xs font-bold"
                 >
-                  + Espaço Reservado (Evento Especial)
+                  + Evento Especial
                 </button>
               </div>
             </div>
 
-            {/* Filtro por Categoria no Gestor */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               {[
                 { id: 'ALL', label: 'Todas as Escalas' },
@@ -2347,7 +3190,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   key={t.id}
                   type="button"
                   onClick={() => setDeaconCategoryFilter(t.id as 'ALL' | DeaconScheduleCategory)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap ${
                     deaconCategoryFilter === t.id
                       ? 'bg-[#344E41] text-white'
                       : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
@@ -2404,9 +3247,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           <strong className="text-stone-800">Pátio/Ordem:</strong>{' '}
                           {item.parkingAndOrderTeam.join(', ') || '—'}
                         </p>
-                        {item.notes && (
-                          <p className="text-[11px] italic text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200/70">
-                            Obs: {item.notes}
+                        {(item.updatedByName || item.createdByName || item.updatedByEmail || item.createdByEmail) && (
+                          <p className="text-[11px] text-stone-400 pt-1">
+                            Publicado/editado por:{' '}
+                            <strong className="text-stone-600">
+                              {item.updatedByName || item.createdByName || item.updatedByEmail || item.createdByEmail}
+                            </strong>
                           </p>
                         )}
                       </div>
@@ -2417,7 +3263,6 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                         type="button"
                         onClick={() => handleOpenDeaconModal(item, true)}
                         className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium flex items-center gap-1"
-                        title="Duplicar escala para outra data"
                       >
                         <Copy className="w-3.5 h-3.5" />
                         <span>Duplicar</span>
@@ -2435,15 +3280,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                         onClick={() =>
                           askConfirmation({
                             title: 'Excluir Escala Diaconal?',
-                            message: `Deseja excluir a escala de "${item.serviceName}" do dia ${new Date(
-                              item.date + 'T12:00:00'
-                            ).toLocaleDateString('pt-BR')}?`,
+                            message: `Deseja excluir a escala de "${item.serviceName}"?`,
                             isDestructive: true,
                             onConfirm: () => deleteDeaconSchedule(item.id)
                           })
                         }
                         className="p-1.5 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50"
-                        title="Excluir escala"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2451,6 +3293,102 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   </div>
                 );
               })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 7: BACKUP, VERCEL & RESET */}
+      {activeTab === 'settings' && (
+        <div className="space-y-6">
+          {/* Backup & Export Area */}
+          <div className="bg-white rounded-3xl p-6 border border-stone-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h4 className="font-bold text-sm text-stone-900">Backup, Exportação e Migração de Dados</h4>
+              <p className="text-xs text-stone-500">
+                Exporte ou importe uma cópia JSON completa desta igreja direto para o Firebase.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+              <label className="min-h-[44px] px-4 py-2 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] text-[#344E41] font-bold text-xs flex items-center gap-2 cursor-pointer">
+                <Upload className="w-4 h-4" />
+                <span>Importar Backup (JSON)</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleImportBackupFile}
+                  className="hidden"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs flex items-center gap-2"
+              >
+                <Download className="w-4 h-4 text-[#344E41]" />
+                <span>Exportar Backup (JSON)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Vercel & Cloud Database Guide */}
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-base text-stone-900">
+                    Variáveis de Ambiente para Vercel / Produção
+                  </h4>
+                  <p className="text-xs text-stone-500">
+                    Projeto Firebase ativo: <strong className="text-stone-800">{activeFirebaseConfig.projectId}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopyVercelEnvVars}
+                className="min-h-[40px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-bold text-xs flex items-center gap-2 self-start sm:self-auto"
+              >
+                {copiedEnvVars ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{copiedEnvVars ? 'Copiado!' : 'Copiar Variáveis .env'}</span>
+              </button>
+            </div>
+
+            <pre className="p-3.5 rounded-2xl bg-stone-900 text-stone-100 font-mono text-[11px] overflow-x-auto leading-relaxed">
+              {vercelEnvBlock}
+            </pre>
+          </div>
+
+          {/* Reset All Content Area */}
+          <div className="bg-amber-50/70 rounded-3xl p-6 border border-amber-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h4 className="font-bold text-sm text-amber-950">Zerar Conteúdo desta Igreja</h4>
+              <p className="text-xs text-amber-800">
+                Limpa cultos, líderes, boletins, escalas, aniversariantes e banners desta igreja mantendo o cadastro e gestores ativos.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                askConfirmation({
+                  title: 'Zerar Conteúdo desta Igreja?',
+                  message:
+                    'Isso deixará os módulos desta igreja em branco (no aparelho e no Firebase). Sua conta de Gestor permanecerá ativa.',
+                  confirmLabel: 'Sim, Zerar Tudo',
+                  isDestructive: true,
+                  onConfirm: () => {
+                    void resetAllChurchContentToBlank();
+                  }
+                })
+              }
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-amber-900 hover:bg-amber-950 text-white font-bold text-xs flex items-center gap-2 shrink-0 self-start sm:self-auto"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Zerar Conteúdo Agora</span>
+            </button>
           </div>
         </div>
       )}
@@ -2463,181 +3401,174 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-              <h3 className="font-bold text-stone-900 text-base">
-                {editingBulletinId ? 'Editar Boletim Semanal' : 'Novo Boletim Semanal'}
-              </h3>
-              <button onClick={() => setBulletinModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+              <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
+                <h3 className="font-bold text-stone-900 text-base">
+                  {editingBulletinId ? 'Editar Boletim Semanal' : 'Novo Boletim Semanal'}
+                </h3>
+                <button onClick={() => setBulletinModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-            <form onSubmit={handleSaveBulletin} className="p-5 overflow-y-auto space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Título da Edição</label>
-                  <input
-                    type="text"
-                    required
-                    value={bulletinForm.title}
-                    onChange={(e) => setBulletinForm({ ...bulletinForm, title: e.target.value })}
-                    placeholder="Ex: Boletim Semanal - A Esperança que Não Falha"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
+              <form onSubmit={handleSaveBulletin} className="p-5 overflow-y-auto space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Título da Edição</label>
+                    <input
+                      type="text"
+                      required
+                      value={bulletinForm.title}
+                      onChange={(e) => setBulletinForm({ ...bulletinForm, title: e.target.value })}
+                      placeholder="Ex: Boletim Dominical"
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Data da Edição</label>
+                    <input
+                      type="date"
+                      required
+                      value={bulletinForm.editionDate}
+                      onChange={(e) => setBulletinForm({ ...bulletinForm, editionDate: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Data da Edição</label>
-                  <input
-                    type="date"
-                    required
-                    value={bulletinForm.editionDate}
-                    onChange={(e) => setBulletinForm({ ...bulletinForm, editionDate: e.target.value })}
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Formato do Boletim</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBulletinForm({ ...bulletinForm, type: 'text' })}
+                      className={`p-2.5 text-xs font-semibold rounded-xl border ${
+                        bulletinForm.type === 'text'
+                          ? 'bg-[#344E41] text-white border-[#344E41]'
+                          : 'bg-stone-50 text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      Editor de Texto (Liturgia &amp; Palavra)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulletinForm({ ...bulletinForm, type: 'pdf' })}
+                      className={`p-2.5 text-xs font-semibold rounded-xl border ${
+                        bulletinForm.type === 'pdf'
+                          ? 'bg-[#344E41] text-white border-[#344E41]'
+                          : 'bg-stone-50 text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      Upload de Arquivo PDF
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Type Switcher: PDF vs Text */}
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Formato do Boletim</label>
-                <div className="grid grid-cols-2 gap-2">
+                {bulletinForm.type === 'pdf' ? (
+                  <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
+                    <span className="text-xs font-bold text-stone-800 block">Arquivo PDF do Boletim</span>
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handlePdfUpload}
+                      className="text-xs text-stone-600 w-full"
+                    />
+                    {bulletinForm.pdfFileName && (
+                      <p className="text-xs text-emerald-700 font-semibold">
+                        Arquivo selecionado: {bulletinForm.pdfFileName}
+                      </p>
+                    )}
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-600 mb-1">Ou informe a URL direta do PDF</label>
+                      <input
+                        type="text"
+                        value={bulletinForm.pdfUrl}
+                        onChange={(e) => setBulletinForm({ ...bulletinForm, pdfUrl: e.target.value })}
+                        placeholder="https://..."
+                        className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-stone-700 mb-1">Versículo Tema da Semana</label>
+                      <input
+                        type="text"
+                        value={bulletinForm.themeVerse}
+                        onChange={(e) => setBulletinForm({ ...bulletinForm, themeVerse: e.target.value })}
+                        className="w-full p-2 text-xs rounded-xl border border-stone-300"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-700 mb-1">Palavra Pastoral / Editorial</label>
+                      <textarea
+                        rows={4}
+                        value={bulletinForm.pastoralWord}
+                        onChange={(e) => setBulletinForm({ ...bulletinForm, pastoralWord: e.target.value })}
+                        className="w-full p-2 text-xs rounded-xl border border-stone-300"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-700 mb-1">
+                        Liturgia / Ordem do Culto (Uma linha por etapa)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={liturgyInputText}
+                        onChange={(e) => setLiturgyInputText(e.target.value)}
+                        className="w-full p-2 text-xs rounded-xl border border-stone-300 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-700 mb-1">
+                        Avisos da Semana (Uma linha por aviso)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={announcementsInputText}
+                        onChange={(e) => setAnnouncementsInputText(e.target.value)}
+                        className="w-full p-2 text-xs rounded-xl border border-stone-300"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="chkCurrent"
+                    checked={bulletinForm.isCurrent}
+                    onChange={(e) => setBulletinForm({ ...bulletinForm, isCurrent: e.target.checked })}
+                    className="rounded text-[#344E41]"
+                  />
+                  <label htmlFor="chkCurrent" className="text-xs font-bold text-stone-700">
+                    Definir este boletim como a edição atual em destaque
+                  </label>
+                </div>
+
+                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setBulletinForm({ ...bulletinForm, type: 'text' })}
-                    className={`p-2.5 text-xs font-semibold rounded-xl border transition-colors ${
-                      bulletinForm.type === 'text'
-                        ? 'bg-[#344E41] text-white border-[#344E41]'
-                        : 'bg-stone-50 text-stone-700 border-stone-200'
-                    }`}
+                    onClick={() => setBulletinModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
                   >
-                    Editor de Texto (Liturgia & Palavra)
+                    Cancelar
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setBulletinForm({ ...bulletinForm, type: 'pdf' })}
-                    className={`p-2.5 text-xs font-semibold rounded-xl border transition-colors ${
-                      bulletinForm.type === 'pdf'
-                        ? 'bg-[#344E41] text-white border-[#344E41]'
-                        : 'bg-stone-50 text-stone-700 border-stone-200'
-                    }`}
+                    type="submit"
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
                   >
-                    Upload de Arquivo PDF
+                    Salvar Boletim
                   </button>
                 </div>
-              </div>
-
-              {/* IF PDF: Upload field */}
-              {bulletinForm.type === 'pdf' ? (
-                <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
-                  <span className="text-xs font-bold text-stone-800 block">Arquivo PDF do Boletim</span>
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    onChange={handlePdfUpload}
-                    className="text-xs text-stone-600 w-full"
-                  />
-                  {bulletinForm.pdfFileName && (
-                    <p className="text-xs text-emerald-700 font-semibold">
-                      Arquivo selecionado: {bulletinForm.pdfFileName}
-                    </p>
-                  )}
-                  <div>
-                    <label className="block text-[11px] font-bold text-stone-600 mb-1">Ou informe a URL direta do PDF</label>
-                    <input
-                      type="text"
-                      value={bulletinForm.pdfUrl}
-                      onChange={(e) => setBulletinForm({ ...bulletinForm, pdfUrl: e.target.value })}
-                      placeholder="https://exemplo.com/boletim.pdf"
-                      className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white"
-                    />
-                  </div>
-                </div>
-              ) : (
-                /* IF TEXT: Liturgy, theme verse, announcements */
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-bold text-stone-700 mb-1">Versículo Tema da Semana</label>
-                    <input
-                      type="text"
-                      value={bulletinForm.themeVerse}
-                      onChange={(e) => setBulletinForm({ ...bulletinForm, themeVerse: e.target.value })}
-                      placeholder="Ex: “O Senhor é o meu pastor; nada me faltará.” — Salmos 23:1"
-                      className="w-full p-2 text-xs rounded-xl border border-stone-300"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-stone-700 mb-1">Palavra Pastoral / Editorial</label>
-                    <textarea
-                      rows={4}
-                      value={bulletinForm.pastoralWord}
-                      onChange={(e) => setBulletinForm({ ...bulletinForm, pastoralWord: e.target.value })}
-                      placeholder="Mensagem do pastor para a congregação..."
-                      className="w-full p-2 text-xs rounded-xl border border-stone-300"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-stone-700 mb-1">
-                      Liturgia / Ordem do Culto (Uma linha por etapa)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={liturgyInputText}
-                      onChange={(e) => setLiturgyInputText(e.target.value)}
-                      placeholder="Prelúdio Instrumental&#10;Hino Congregacional&#10;Leitura Bíblica&#10;Mensagem Pastoral"
-                      className="w-full p-2 text-xs rounded-xl border border-stone-300 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-stone-700 mb-1">
-                      Avisos da Semana (Uma linha por aviso)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={announcementsInputText}
-                      onChange={(e) => setAnnouncementsInputText(e.target.value)}
-                      placeholder="Escola Bíblica Dominical às 10h15&#10;Reunião de Jovens no Sábado"
-                      className="w-full p-2 text-xs rounded-xl border border-stone-300"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-2 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="chkCurrent"
-                  checked={bulletinForm.isCurrent}
-                  onChange={(e) => setBulletinForm({ ...bulletinForm, isCurrent: e.target.checked })}
-                  className="rounded text-[#344E41] focus:ring-[#344E41]"
-                />
-                <label htmlFor="chkCurrent" className="text-xs font-bold text-stone-700">
-                  Definir este boletim como a edição atual em destaque
-                </label>
-              </div>
-
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBulletinModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
-                >
-                  Salvar Boletim
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* 2. MODAL: ANIVERSARIANTE */}
       {birthdayModalOpen &&
@@ -2645,129 +3576,138 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-lg max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-              <h3 className="font-bold text-stone-900 text-base">
-                {editingBirthdayId ? 'Editar Aniversariante' : 'Cadastrar Aniversariante'}
-              </h3>
-              <button onClick={() => setBirthdayModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveBirthday} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Nome Completo</label>
-                <input
-                  type="text"
-                  required
-                  value={birthdayForm.name}
-                  onChange={(e) => setBirthdayForm({ ...birthdayForm, name: e.target.value })}
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
+              <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
+                <h3 className="font-bold text-stone-900 text-base">
+                  {editingBirthdayId ? 'Editar Aniversariante' : 'Cadastrar Aniversariante'}
+                </h3>
+                <button onClick={() => setBirthdayModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <form onSubmit={handleSaveBirthday} className="p-5 space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Dia</label>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Nome Completo</label>
                   <input
-                    type="number"
-                    min={1}
-                    max={31}
+                    type="text"
                     required
-                    value={birthdayForm.birthDay}
-                    onChange={(e) => setBirthdayForm({ ...birthdayForm, birthDay: Number(e.target.value) })}
+                    value={birthdayForm.name}
+                    onChange={(e) => setBirthdayForm({ ...birthdayForm, name: e.target.value })}
                     className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Mês</label>
-                  <select
-                    value={birthdayForm.birthMonth}
-                    onChange={(e) => setBirthdayForm({ ...birthdayForm, birthMonth: Number(e.target.value) })}
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Dia</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      required
+                      value={birthdayForm.birthDay}
+                      onChange={(e) => setBirthdayForm({ ...birthdayForm, birthDay: Number(e.target.value) })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Mês</label>
+                    <select
+                      value={birthdayForm.birthMonth}
+                      onChange={(e) => setBirthdayForm({ ...birthdayForm, birthMonth: Number(e.target.value) })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                    >
+                      {[
+                        'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                        'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+                      ].map((m, idx) => (
+                        <option key={idx + 1} value={idx + 1}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Ano (Opcional)</label>
+                    <input
+                      type="number"
+                      min={1920}
+                      max={new Date().getFullYear()}
+                      value={birthdayForm.birthYear || ''}
+                      onChange={(e) =>
+                        setBirthdayForm({
+                          ...birthdayForm,
+                          birthYear: e.target.value ? Number(e.target.value) : undefined
+                        })
+                      }
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Telefone / WhatsApp</label>
+                    <input
+                      type="text"
+                      value={birthdayForm.phone || ''}
+                      onChange={(e) => setBirthdayForm({ ...birthdayForm, phone: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Ministério / Grupo</label>
+                    <input
+                      type="text"
+                      value={birthdayForm.ministry || ''}
+                      onChange={(e) => setBirthdayForm({ ...birthdayForm, ministry: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-stone-50 border border-stone-200 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold text-stone-800">Foto do Aniversariante (Opcional)</span>
+                    <label className="min-h-[38px] px-3.5 py-2 rounded-xl bg-[#344E41] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload da Foto</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) =>
+                          handleFileUpload(
+                            e,
+                            (b64) => setBirthdayForm((prev) => ({ ...prev, photoUrl: b64 })),
+                            450
+                          )
+                        }
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBirthdayModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
                   >
-                    {[
-                      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-                      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-                    ].map((m, idx) => (
-                      <option key={idx + 1} value={idx + 1}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                  >
+                    Salvar
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Ano (Opcional)</label>
-                  <input
-                    type="number"
-                    min={1920}
-                    max={new Date().getFullYear()}
-                    value={birthdayForm.birthYear || ''}
-                    onChange={(e) =>
-                      setBirthdayForm({
-                        ...birthdayForm,
-                        birthYear: e.target.value ? Number(e.target.value) : undefined
-                      })
-                    }
-                    placeholder="1990"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Telefone / WhatsApp</label>
-                  <input
-                    type="text"
-                    value={birthdayForm.phone || ''}
-                    onChange={(e) => setBirthdayForm({ ...birthdayForm, phone: e.target.value })}
-                    placeholder="(11) 99999-8888"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Ministério / Grupo</label>
-                  <input
-                    type="text"
-                    value={birthdayForm.ministry || ''}
-                    onChange={(e) => setBirthdayForm({ ...birthdayForm, ministry: e.target.value })}
-                    placeholder="Ex: Louvor, EBD, Diaconia"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Foto (Opcional com compressão)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleFileUpload(e, (b64) => setBirthdayForm({ ...birthdayForm, photoUrl: b64 }))}
-                  className="text-xs text-stone-500 w-full"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBirthdayModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
-                >
-                  Salvar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* 3. MODAL: IMPORTAR CSV */}
       {csvModalOpen &&
@@ -2775,32 +3715,14 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-              <div>
+              <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
                 <h3 className="font-bold text-stone-900 text-base">Importar Aniversariantes via CSV</h3>
-                <p className="text-xs text-stone-500">Cole o conteúdo da planilha ou faça upload do arquivo .csv</p>
-              </div>
-              <button onClick={() => setCsvModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4">
-              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 text-xs text-stone-600 space-y-1">
-                <p className="font-bold text-stone-800">Formato esperado do cabeçalho:</p>
-                <p className="font-mono text-[11px] bg-white p-2 rounded border border-stone-200">
-                  Nome,Data,Telefone,Ministerio
-                  <br />
-                  Carlos Silva,15/04/1985,(11) 98888-7777,Diaconia
-                  <br />
-                  Mariana Costa,22/10,(11) 97777-6666,Coral
-                </p>
+                <button onClick={() => setCsvModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Upload de Arquivo .CSV ou cole abaixo:
-                </label>
+              <div className="p-5 overflow-y-auto space-y-4">
                 <input
                   type="file"
                   accept=".csv,text/csv"
@@ -2818,65 +3740,31 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   value={csvTextInput}
                   onChange={(e) => handleCsvTextChange(e.target.value)}
                   placeholder="Nome,Data,Telefone,Ministerio..."
-                  className="w-full p-2.5 text-xs font-mono rounded-xl border border-stone-300 focus:outline-none"
+                  className="w-full p-2.5 text-xs font-mono rounded-xl border border-stone-300"
                 />
-              </div>
 
-              {/* Preview table */}
-              {csvParsedPreview.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-emerald-800 block">
-                    Pré-visualização: {csvParsedPreview.length} registros identificados
-                  </span>
-                  <div className="max-h-48 overflow-y-auto border border-stone-200 rounded-xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-stone-100 text-[10px] uppercase font-bold text-stone-600">
-                        <tr>
-                          <th className="p-2">Nome</th>
-                          <th className="p-2">Data</th>
-                          <th className="p-2">Telefone</th>
-                          <th className="p-2">Ministério</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-stone-100">
-                        {csvParsedPreview.map((p, idx) => (
-                          <tr key={idx}>
-                            <td className="p-2 font-semibold text-stone-900">{p.name}</td>
-                            <td className="p-2">
-                              {p.birthDay}/{p.birthMonth}
-                            </td>
-                            <td className="p-2">{p.phone || '—'}</td>
-                            <td className="p-2">{p.ministry || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCsvModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleApplyCsvImport}
+                    disabled={csvParsedPreview.length === 0}
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] disabled:opacity-50 rounded-xl"
+                  >
+                    Confirmar e Importar ({csvParsedPreview.length})
+                  </button>
                 </div>
-              )}
-
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCsvModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyCsvImport}
-                  disabled={csvParsedPreview.length === 0}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] disabled:opacity-50 rounded-xl shadow-xs"
-                >
-                  Confirmar e Importar
-                </button>
               </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* 4. MODAL: BANNER */}
       {bannerModalOpen &&
@@ -2884,149 +3772,112 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-lg max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-              <h3 className="font-bold text-stone-900 text-base">
-                {editingBannerId ? 'Editar Banner' : 'Novo Banner de Divulgação'}
-              </h3>
-              <button onClick={() => setBannerModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveBanner} className="p-5 overflow-y-auto space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Título do Banner</label>
-                <input
-                  type="text"
-                  required
-                  value={bannerForm.title}
-                  onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })}
-                  placeholder="Ex: Retiro de Casais 2026"
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
+              <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
+                <h3 className="font-bold text-stone-900 text-base">
+                  {editingBannerId ? 'Editar Banner' : 'Novo Banner de Divulgação'}
+                </h3>
+                <button onClick={() => setBannerModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <form onSubmit={handleSaveBanner} className="p-5 overflow-y-auto space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Posição na Página</label>
-                  <select
-                    value={bannerForm.position}
-                    onChange={(e) => setBannerForm({ ...bannerForm, position: e.target.value as BannerPosition })}
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
-                  >
-                    <option value="topo">Topo (Acima do Header)</option>
-                    <option value="meio">Meio da Página</option>
-                    <option value="rodape">Rodapé da Página</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Ordem de Rotação</label>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Título do Banner</label>
                   <input
-                    type="number"
-                    min={1}
-                    value={bannerForm.order}
-                    onChange={(e) => setBannerForm({ ...bannerForm, order: Number(e.target.value) })}
+                    type="text"
+                    required
+                    value={bannerForm.title}
+                    onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })}
                     className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Imagem do Banner (Upload ou URL)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleFileUpload(e, (b64) => setBannerForm({ ...bannerForm, imageUrl: b64 }))}
-                  className="text-xs text-stone-500 mb-2 w-full"
-                />
-                <input
-                  type="text"
-                  value={bannerForm.imageUrl}
-                  onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })}
-                  placeholder="Ou cole a URL da imagem..."
-                  className="w-full p-2 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              {/* Preview image */}
-              {bannerForm.imageUrl && (
-                <div className="p-2 border border-stone-200 rounded-xl bg-stone-50">
-                  <span className="text-[10px] font-bold text-stone-500 block mb-1">Pré-visualização:</span>
-                  <img
-                    src={bannerForm.imageUrl}
-                    alt="Preview"
-                    className="w-full h-24 object-cover rounded-lg"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Posição na Página</label>
+                    <select
+                      value={bannerForm.position}
+                      onChange={(e) => setBannerForm({ ...bannerForm, position: e.target.value as BannerPosition })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                    >
+                      <option value="topo">Topo (Acima do Header)</option>
+                      <option value="meio">Meio da Página</option>
+                      <option value="rodape">Rodapé da Página</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Ordem de Rotação</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={bannerForm.order}
+                      onChange={(e) => setBannerForm({ ...bannerForm, order: Number(e.target.value) })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
                 </div>
-              )}
 
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Link de Destino ao Clicar (Opcional)</label>
-                <input
-                  type="text"
-                  value={bannerForm.linkUrl || ''}
-                  onChange={(e) => setBannerForm({ ...bannerForm, linkUrl: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
+                <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold text-stone-800">Imagem do Banner *</span>
+                    <label className="min-h-[38px] px-3.5 py-2 rounded-xl bg-[#344E41] text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload da Imagem</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) =>
+                          handleFileUpload(
+                            e,
+                            (b64) => setBannerForm((prev) => ({ ...prev, imageUrl: b64 })),
+                            1000
+                          )
+                        }
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Data Início (Opcional)</label>
                   <input
-                    type="date"
-                    value={bannerForm.startDate || ''}
-                    onChange={(e) => setBannerForm({ ...bannerForm, startDate: e.target.value })}
-                    className="w-full p-2 text-xs rounded-xl border border-stone-300"
+                    type="text"
+                    value={bannerForm.imageUrl || ''}
+                    onChange={(e) => setBannerForm({ ...bannerForm, imageUrl: e.target.value })}
+                    placeholder="Ou cole a URL direta da imagem..."
+                    className="w-full p-2 text-xs rounded-xl border border-stone-300 bg-white"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Data Término (Opcional)</label>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Link de Destino (Opcional)</label>
                   <input
-                    type="date"
-                    value={bannerForm.endDate || ''}
-                    onChange={(e) => setBannerForm({ ...bannerForm, endDate: e.target.value })}
-                    className="w-full p-2 text-xs rounded-xl border border-stone-300"
+                    type="text"
+                    value={bannerForm.linkUrl || ''}
+                    onChange={(e) => setBannerForm({ ...bannerForm, linkUrl: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
                   />
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="chkBannerActive"
-                  checked={bannerForm.isActive}
-                  onChange={(e) => setBannerForm({ ...bannerForm, isActive: e.target.checked })}
-                  className="rounded text-[#344E41] focus:ring-[#344E41]"
-                />
-                <label htmlFor="chkBannerActive" className="text-xs font-bold text-stone-700">
-                  Banner ativo para exibição
-                </label>
-              </div>
-
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBannerModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
-                >
-                  Salvar Banner
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBannerModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] rounded-xl"
+                  >
+                    Salvar Banner
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* 5. MODAL: ESCALA DE DIÁCONOS */}
       {deaconModalOpen &&
@@ -3034,163 +3885,143 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-xl max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
-            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-              <h3 className="font-bold text-stone-900 text-base">
-                {editingDeaconId ? 'Editar Escala de Diáconos' : 'Nova Escala de Diáconos'}
-              </h3>
-              <button onClick={() => setDeaconModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
+                <h3 className="font-bold text-stone-900 text-base">
+                  {editingDeaconId ? 'Editar Escala de Diáconos' : 'Nova Escala de Diáconos'}
+                </h3>
+                <button onClick={() => setDeaconModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveDeaconSchedule} className="p-5 overflow-y-auto space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Modalidade da Escala</label>
+                  <select
+                    value={deaconForm.category || 'domingo_manha'}
+                    onChange={(e) => handleSelectDeaconCategoryInModal(e.target.value as DeaconScheduleCategory)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white font-semibold"
+                  >
+                    <option value="semana_oracao">1ª Semana do Mês — Semana de Oração</option>
+                    <option value="quinta_estudo">Quinta-feira — Culto de Estudo e Oração</option>
+                    <option value="domingo_manha">Domingo pela Manhã — Culto Matutino</option>
+                    <option value="domingo_noite">Domingo à Noite — Culto Noturno</option>
+                    <option value="evento_especial">Evento Especial</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Data do Plantão</label>
+                    <input
+                      type="date"
+                      required
+                      value={deaconForm.date}
+                      onChange={(e) => setDeaconForm({ ...deaconForm, date: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Horário</label>
+                    <input
+                      type="text"
+                      required
+                      value={deaconForm.time}
+                      onChange={(e) => setDeaconForm({ ...deaconForm, time: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">Culto, Reunião ou Evento</label>
+                  <input
+                    type="text"
+                    required
+                    value={deaconForm.serviceName}
+                    onChange={(e) => setDeaconForm({ ...deaconForm, serviceName: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">Diácono Coordenador</label>
+                    <input
+                      type="text"
+                      required
+                      value={deaconForm.coordinator}
+                      onChange={(e) => setDeaconForm({ ...deaconForm, coordinator: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-stone-700 mb-1">WhatsApp do Coordenador (Opcional)</label>
+                    <input
+                      type="text"
+                      value={deaconForm.coordinatorPhone || ''}
+                      onChange={(e) => setDeaconForm({ ...deaconForm, coordinatorPhone: e.target.value })}
+                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Equipe de Recepção e Porta (separe por vírgula)
+                  </label>
+                  <input
+                    type="text"
+                    value={receptionInput}
+                    onChange={(e) => setReceptionInput(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Equipe de Dízimos, Ofertas e Santa Ceia (separe por vírgula)
+                  </label>
+                  <input
+                    type="text"
+                    value={offeringInput}
+                    onChange={(e) => setOfferingInput(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Equipe de Pátio, Estacionamento e Ordem (separe por vírgula)
+                  </label>
+                  <input
+                    type="text"
+                    value={parkingInput}
+                    onChange={(e) => setParkingInput(e.target.value)}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeaconModalOpen(false)}
+                    className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] rounded-xl"
+                  >
+                    Salvar Escala
+                  </button>
+                </div>
+              </form>
             </div>
-
-            <form onSubmit={handleSaveDeaconSchedule} className="p-5 overflow-y-auto space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Modalidade da Escala da Igreja
-                </label>
-                <select
-                  value={deaconForm.category || 'domingo_manha'}
-                  onChange={(e) => handleSelectDeaconCategoryInModal(e.target.value as DeaconScheduleCategory)}
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white font-semibold text-stone-800"
-                >
-                  <option value="semana_oracao">1ª Semana do Mês — Semana de Oração</option>
-                  <option value="quinta_estudo">Quinta-feira — Culto de Estudo e Oração</option>
-                  <option value="domingo_manha">Domingo pela Manhã — Culto Matutino</option>
-                  <option value="domingo_noite">Domingo à Noite — Culto Noturno</option>
-                  <option value="evento_especial">Espaço Reservado — Evento Especial (caso haja)</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Data do Plantão</label>
-                  <input
-                    type="date"
-                    required
-                    value={deaconForm.date}
-                    onChange={(e) => setDeaconForm({ ...deaconForm, date: e.target.value })}
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Horário</label>
-                  <input
-                    type="text"
-                    required
-                    value={deaconForm.time}
-                    onChange={(e) => setDeaconForm({ ...deaconForm, time: e.target.value })}
-                    placeholder="Ex: 09h00 ou 19h30"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Culto, Reunião ou Evento</label>
-                <input
-                  type="text"
-                  required
-                  value={deaconForm.serviceName}
-                  onChange={(e) => setDeaconForm({ ...deaconForm, serviceName: e.target.value })}
-                  placeholder="Ex: 1ª Semana de Oração / Culto de Estudo e Oração"
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Diácono Coordenador do Dia</label>
-                  <input
-                    type="text"
-                    required
-                    value={deaconForm.coordinator}
-                    onChange={(e) => setDeaconForm({ ...deaconForm, coordinator: e.target.value })}
-                    placeholder="Ex: Diác. Carlos Eduardo"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">WhatsApp do Coordenador (Opcional)</label>
-                  <input
-                    type="text"
-                    value={deaconForm.coordinatorPhone || ''}
-                    onChange={(e) => setDeaconForm({ ...deaconForm, coordinatorPhone: e.target.value })}
-                    placeholder="5511999887766"
-                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Equipe de Recepção e Porta (separe por vírgula)
-                </label>
-                <input
-                  type="text"
-                  value={receptionInput}
-                  onChange={(e) => setReceptionInput(e.target.value)}
-                  placeholder="Ex: Diác. Lucas Magalhães, Diác. Mariana Costa"
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Equipe de Dízimos, Ofertas e Santa Ceia (separe por vírgula)
-                </label>
-                <input
-                  type="text"
-                  value={offeringInput}
-                  onChange={(e) => setOfferingInput(e.target.value)}
-                  placeholder="Ex: Diác. Helena Drummond, Diác. Marcos Azevedo"
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Equipe de Pátio, Estacionamento e Ordem (separe por vírgula)
-                </label>
-                <input
-                  type="text"
-                  value={parkingInput}
-                  onChange={(e) => setParkingInput(e.target.value)}
-                  placeholder="Ex: Diác. André Viana, Diác. Felipe Tavares"
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Observações do Plantão (Opcional)</label>
-                <textarea
-                  rows={2}
-                  value={deaconForm.notes || ''}
-                  onChange={(e) => setDeaconForm({ ...deaconForm, notes: e.target.value })}
-                  placeholder="Ex: Chegar 30 minutos antes para preparação da Santa Ceia."
-                  className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDeaconModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl shadow-xs"
-                >
-                  Salvar Escala
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

@@ -1,19 +1,44 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Calendar, Church, ClipboardList, Database, FileText, Home, LogOut, Menu, Phone, ShieldCheck, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowLeftRight,
+  BookOpen,
+  Calendar,
+  Church,
+  ClipboardList,
+  Database,
+  ExternalLink,
+  FileText,
+  Home,
+  LogOut,
+  Menu,
+  Phone,
+  ShieldCheck,
+  X
+} from 'lucide-react';
 import { useChurch } from '../../context/ChurchContext';
 import { ViewMode } from '../../types';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export const Navbar: React.FC = () => {
   const {
     currentView,
     setCurrentView,
+    activeChurch,
+    platformSettings,
+    switchChurch,
+    isPlatformOwner,
     churchInfo,
+    firebaseUser,
     isManagerAuthenticated,
     managerLogout,
     cacheMetadata
   } = useChurch();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const isPlatformHeaderMode =
+    currentView === 'manager' || currentView === 'admin' || !activeChurch;
 
   const navItems: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
     { id: 'home', label: 'Início', icon: <Home className="w-4 h-4" /> },
@@ -30,28 +55,131 @@ export const Navbar: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // ============================================================================
+  // MODO 1: CABEÇALHO DA PLATAFORMA (Portal do Gestor, /admin ou Bíblia avulsa)
+  // Sem menu de igreja e sem nome de igreja visitada anteriormente
+  // ============================================================================
+  if (isPlatformHeaderMode) {
+    const platformName = platformSettings.appName || 'Minha Igreja';
+    const subtitle =
+      currentView === 'manager'
+        ? 'Portal do Gestor'
+        : currentView === 'admin'
+        ? 'Administração da Plataforma (/admin)'
+        : platformSettings.tagline || 'Plataforma Digital Multi-Igreja';
+
+    return (
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200 transition-shadow">
+        <div className="max-w-6xl mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-2">
+          {/* Platform Brand */}
+          <button
+            type="button"
+            onClick={switchChurch}
+            className="flex items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#344E41] rounded-lg py-1 transition-opacity hover:opacity-90 min-w-0"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#344E41] text-white flex items-center justify-center shadow-sm shrink-0">
+              <Church className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="font-serif font-bold text-stone-900 tracking-tight text-sm sm:text-base leading-tight truncate">
+                {platformName}
+              </span>
+              <span className="text-[11px] text-[#344E41] font-semibold truncate">
+                {subtitle}
+              </span>
+            </div>
+          </button>
+
+          {/* Platform Header Actions (No Church Menu) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <PWAInstallButton />
+
+            {activeChurch && currentView === 'manager' && (
+              <button
+                type="button"
+                onClick={() => handleNav('home')}
+                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
+                title={`Abrir página pública da ${activeChurch.name}`}
+              >
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Ver Página da Igreja</span>
+                <span className="sm:hidden">Ver Igreja</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={switchChurch}
+              className="min-h-[38px] px-3 py-1.5 rounded-xl border border-stone-200 hover:bg-stone-100 text-stone-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-[#344E41] shrink-0" />
+              <span className="hidden sm:inline">Tela Inicial (/)</span>
+              <span className="sm:hidden">Início</span>
+            </button>
+
+            {isPlatformOwner && currentView !== 'admin' && (
+              <button
+                type="button"
+                onClick={() => handleNav('admin')}
+                className="min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 flex items-center gap-1"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-[#344E41]" />
+                <span>Admin</span>
+              </button>
+            )}
+
+            {firebaseUser && (
+              <button
+                type="button"
+                onClick={managerLogout}
+                title="Sair da conta"
+                className="min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-semibold text-stone-500 hover:text-rose-600 hover:bg-rose-50 flex items-center gap-1 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Sair</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+    );
+  }
+
+  // ============================================================================
+  // MODO 2: CABEÇALHO DA IGREJA CADASTRADA (Dentro de /{slug})
+  // Mostra sempre o nome e o logo da igreja ativa
+  // ============================================================================
+  const themeColor = activeChurch.themeColor || '#344E41';
+  const churchDisplayName = activeChurch.name || churchInfo.name || platformSettings.appName || 'Minha Igreja';
+  const churchDisplayLogo = activeChurch.logoUrl || churchInfo.logoUrl;
+
   return (
     <>
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200 transition-shadow">
         <div className="max-w-6xl mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-2">
-          {/* Brand / Logo */}
+          {/* Brand / Logo of the Active Church */}
           <button
             onClick={() => handleNav('home')}
             className="flex items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#344E41] rounded-lg py-1 transition-opacity hover:opacity-90 flex-1 min-w-0"
           >
-            <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#344E41] flex items-center justify-center text-white font-serif font-bold text-base shadow-sm shrink-0">
-              {churchInfo.logoUrl ? (
-                <img src={churchInfo.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+            <div
+              className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-white font-serif font-bold text-base shadow-sm shrink-0"
+              style={{ backgroundColor: themeColor }}
+            >
+              {churchDisplayLogo ? (
+                <img src={churchDisplayLogo} alt={churchDisplayName} className="w-full h-full object-cover" />
               ) : (
-                <span>IPC</span>
+                <Church className="w-5 h-5 text-white" />
               )}
             </div>
             <div className="flex flex-col min-w-0 flex-1">
               <span className="font-bold text-stone-900 tracking-tight text-sm sm:text-base leading-tight truncate">
-                {churchInfo.name}
+                {churchDisplayName}
               </span>
               <span className="text-[11px] text-stone-500 font-medium truncate">
-                {churchInfo.tagline}
+                {activeChurch.city && activeChurch.state
+                  ? `${activeChurch.city} / ${activeChurch.state}`
+                  : churchInfo.tagline || platformSettings.appName || 'Minha Igreja'}
               </span>
             </div>
           </button>
@@ -77,18 +205,36 @@ export const Navbar: React.FC = () => {
             })}
           </nav>
 
-          {/* Right Actions: Manager + Drawer Menu */}
+          {/* Right Actions: Switch Church + Manager + Drawer Menu */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="hidden lg:flex items-center">
+            <div className="hidden lg:flex items-center gap-1">
+              <PWAInstallButton />
+
+              <button
+                type="button"
+                onClick={switchChurch}
+                title="Trocar de igreja"
+                className="min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 flex items-center gap-1.5 transition-colors"
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5 text-[#344E41]" />
+                <span>Trocar de igreja</span>
+              </button>
+
+              {isPlatformOwner && (
+                <button
+                  type="button"
+                  onClick={() => handleNav('admin')}
+                  className="min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-200"
+                >
+                  Admin
+                </button>
+              )}
+
               {isManagerAuthenticated ? (
                 <div className="flex items-center gap-1 pl-1.5 ml-1 border-l border-stone-200">
                   <button
                     onClick={() => handleNav('manager')}
-                    className={`min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                      currentView === 'manager'
-                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                        : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-                    }`}
+                    className="min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors bg-stone-100 text-stone-700 hover:bg-stone-200"
                   >
                     <ShieldCheck className="w-3.5 h-3.5 text-[#344E41]" />
                     <span>Gestor</span>
@@ -150,7 +296,9 @@ export const Navbar: React.FC = () => {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-4 border-b border-stone-100">
-                <span className="font-semibold text-stone-800 text-sm tracking-wide">Menu do Aplicativo</span>
+                <span className="font-semibold text-stone-800 text-sm tracking-wide truncate">
+                  {churchDisplayName}
+                </span>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
                   className="min-h-[40px] min-w-[40px] flex items-center justify-center text-stone-400 hover:text-stone-700 rounded-lg"
@@ -190,15 +338,43 @@ export const Navbar: React.FC = () => {
                 })}
 
                 <div className="pt-4 mt-4 border-t border-stone-100 space-y-2.5">
-                  <a
-                    href={`https://wa.me/${churchInfo.whatsappNumber}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full min-h-[44px] px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl flex items-center justify-center gap-2"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      switchChurch();
+                    }}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold flex items-center justify-between transition-colors"
                   >
-                    <Phone className="w-4 h-4 text-emerald-600" />
-                    <span>Falar no WhatsApp da Igreja</span>
-                  </a>
+                    <span className="flex items-center gap-2">
+                      <ArrowLeftRight className="w-4 h-4 text-[#344E41]" />
+                      <span>Trocar de igreja</span>
+                    </span>
+                    <span className="text-[10px] text-stone-500">Diretório</span>
+                  </button>
+
+                  {churchInfo.whatsappNumber && (
+                    <a
+                      href={`https://wa.me/${churchInfo.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage || '')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-[44px] px-3 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl flex items-center justify-center gap-2"
+                    >
+                      <Phone className="w-4 h-4 text-emerald-600" />
+                      <span>Falar no WhatsApp da Igreja</span>
+                    </a>
+                  )}
+
+                  {isPlatformOwner && (
+                    <button
+                      type="button"
+                      onClick={() => handleNav('admin')}
+                      className="w-full min-h-[44px] px-3 py-2 text-xs font-bold rounded-xl bg-amber-100 text-amber-950 border border-amber-300 flex items-center gap-2"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-[#344E41]" />
+                      <span>Painel Owner da Plataforma (/admin)</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={() => handleNav('manager')}
@@ -210,7 +386,7 @@ export const Navbar: React.FC = () => {
                   >
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="w-4 h-4 text-[#344E41]" />
-                      <span>{isManagerAuthenticated ? 'Painel do Gestor (Ativo)' : 'Área do Gestor'}</span>
+                      <span>{isManagerAuthenticated ? 'Painel do Gestor (Ativo)' : 'Portal do Gestor'}</span>
                     </div>
                     {isManagerAuthenticated && (
                       <span className="text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">Logado</span>
@@ -233,7 +409,9 @@ export const Navbar: React.FC = () => {
               </div>
 
               <div className="pt-4 border-t border-stone-100 text-center text-xs text-stone-400">
-                <span>{churchInfo.name}</span>
+                <span>
+                  {churchDisplayName} — {platformSettings.appName || 'Minha Igreja'}
+                </span>
               </div>
             </div>
           </div>,

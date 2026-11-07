@@ -3,8 +3,17 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { BibleApiService } from '../services/bibleApi';
-import { CloudChurchService } from '../services/cloudDatabase';
-import { ChurchStorageService, STORAGE_KEYS, UserCacheMetadata } from '../services/storage';
+import {
+  CloudChurchService,
+  isPlatformOwnerEmail,
+  slugifyChurchName
+} from '../services/cloudDatabase';
+import {
+  ChurchStorageService,
+  INITIAL_CHURCH_INFO,
+  STORAGE_KEYS,
+  UserCacheMetadata
+} from '../services/storage';
 import {
   AppSettings,
   Banner,
@@ -14,8 +23,15 @@ import {
   ChurchInfo,
   ChurchManagerAccount,
   ChurchRegistry,
+  ChurchStatus,
+  ChurchTenant,
   DeaconScheduleItem,
+  LeaderMember,
   ManagerApprovalStatus,
+  PlatformSettings,
+  PlatformUser,
+  ScheduleItem,
+  TeamRole,
   UserBibleNote,
   UserFavoriteVerse,
   ViewMode
@@ -37,9 +53,63 @@ interface ConfirmDialogState {
 }
 
 interface ChurchContextType {
-  // Navigation
+  // Navigation & Multi-Church Routing
   currentView: ViewMode;
   setCurrentView: (view: ViewMode) => void;
+  activeChurch: ChurchTenant | null;
+  activeChurches: ChurchTenant[];
+  managedChurches: ChurchTenant[];
+  allChurchesForOwner: ChurchTenant[];
+  allPlatformUsers: PlatformUser[];
+  platformSettings: PlatformSettings;
+  updatePlatformSettings: (settings: PlatformSettings) => Promise<void>;
+  selectChurchBySlug: (slug: string, targetView?: ViewMode) => Promise<boolean>;
+  switchChurch: () => void;
+  openManagerPortalFromDirectory: () => void;
+
+  // Multi-Church Manager Onboarding & Team Roles
+  needsChurchOnboarding: boolean;
+  isCreatingAdditionalChurch: boolean;
+  setIsCreatingAdditionalChurch: (val: boolean) => void;
+  currentUserTeamRole: TeamRole | null;
+  isChurchAdmin: boolean;
+  createNewChurchInCloud: (wizardData: {
+    name: string;
+    slug: string;
+    logoUrl?: string;
+    themeColor?: string;
+    city: string;
+    state: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    primaryPhone?: string;
+    whatsappNumber?: string;
+    email?: string;
+    instagramUrl?: string;
+    youtubeUrl?: string;
+    facebookUrl?: string;
+    tagline?: string;
+    schedules?: ScheduleItem[];
+  }) => Promise<ChurchTenant>;
+  updateChurchSlugAndMeta: (extra: {
+    slug?: string;
+    city?: string;
+    state?: string;
+    themeColor?: string;
+    latitude?: number;
+    longitude?: number;
+  }) => Promise<void>;
+  inviteTeamMemberByEmail: (email: string, role: TeamRole) => Promise<void>;
+  updateTeamMemberRoleByEmail: (email: string, role: TeamRole) => Promise<void>;
+  inviteCoManagerByEmail: (email: string) => Promise<void>;
+  removeCoManagerEmail: (email: string) => Promise<void>;
+
+  // Owner /admin Actions
+  isPlatformOwner: boolean;
+  setChurchStatusByOwner: (churchId: string, status: ChurchStatus) => Promise<void>;
+  deleteChurchByOwner: (churchId: string) => Promise<void>;
+  wipeAllPlatformDataByOwner: () => Promise<void>;
 
   // Church Info
   churchInfo: ChurchInfo;
@@ -80,9 +150,11 @@ interface ChurchContextType {
   settings: AppSettings;
   updateSettings: (newSettings: Partial<AppSettings>) => void;
 
-  // Cloud & Manager Authentication + Anti-Duplication Approval System
+  // Cloud & Manager Authentication
   isManagerAuthenticated: boolean;
+  isEmailVerified: boolean;
   firebaseUser: User | null;
+  platformUser: PlatformUser | null;
   currentManagerAccount: ChurchManagerAccount | null;
   churchRegistry: ChurchRegistry | null;
   allManagers: ChurchManagerAccount[];
@@ -96,10 +168,13 @@ interface ChurchContextType {
     churchNameIfFirst?: string
   ) => Promise<void>;
   loginManagerWithEmailCloud: (email: string, pass: string) => Promise<void>;
+  resendEmailVerification: () => Promise<void>;
+  checkEmailVerificationNow: () => Promise<boolean>;
   approveOrRevokeManager: (targetUid: string, status: ManagerApprovalStatus) => Promise<void>;
   removePendingManager: (targetUid: string) => Promise<void>;
   syncLocalDataToCloud: () => Promise<void>;
   pullLatestFromCloud: () => Promise<void>;
+  resetAllChurchContentToBlank: () => Promise<void>;
   importFullChurchBackup: (jsonText: string) => Promise<void>;
   managerLogin: (email: string, password: string) => boolean;
   managerLogout: () => void;
@@ -132,54 +207,185 @@ interface ChurchContextType {
 
 const ChurchContext = createContext<ChurchContextType | undefined>(undefined);
 
+function parseUrlRoute(pathname: string): {
+  mode: 'directory' | 'admin' | 'church' | 'manager';
+  slug?: string;
+} {
+  const clean = pathname.replace(/^\/+|\/+$/g, '');
+  if (!clean) {
+    return { mode: 'directory' };
+  }
+  if (clean === 'admin') {
+    return { mode: 'admin' };
+  }
+  if (clean === 'gestor') {
+    return { mode: 'manager' };
+  }
+  const segments = clean.split('/');
+  const slug = segments[0].toLowerCase();
+  if (segments[1] === 'gestor') {
+    return { mode: 'manager', slug };
+  }
+  return { mode: 'church', slug };
+}
+
 export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Immediately initialize user cache on boot so data is never empty on reopen
   const [cacheMetadata, setCacheMetadata] = useState<UserCacheMetadata>(() =>
     ChurchStorageService.initializeUserCacheOnBoot()
   );
 
-  const [currentView, setCurrentView] = useState<ViewMode>('home');
+  const initialRoute = parseUrlRoute(
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
+  const savedSlugOnBoot = ChurchStorageService.getSelectedChurchSlug();
+
+  const [currentView, setCurrentViewState] = useState<ViewMode>(() => {
+    if (initialRoute.mode === 'admin') return 'admin';
+    if (initialRoute.mode === 'manager') return 'manager';
+    if (initialRoute.mode === 'church') return 'home';
+    if (savedSlugOnBoot) return 'home';
+    return 'directory';
+  });
+
   const [isMobileAppPreview, setIsMobileAppPreviewState] = useState<boolean>(false);
 
-  const [churchInfo, setChurchInfoState] = useState<ChurchInfo>(() => ChurchStorageService.getChurchInfo());
-  const [bulletins, setBulletinsState] = useState<Bulletin[]>(() => ChurchStorageService.getBulletins());
-  const [birthdays, setBirthdaysState] = useState<BirthdayPerson[]>(() => ChurchStorageService.getBirthdays());
-  const [deaconSchedules, setDeaconSchedulesState] = useState<DeaconScheduleItem[]>(() =>
-    ChurchStorageService.getDeaconSchedules()
-  );
-  const [banners, setBannersState] = useState<Banner[]>(() => ChurchStorageService.getBanners());
-  const [settings, setSettingsState] = useState<AppSettings>(() => ChurchStorageService.getSettings());
+  // Multi-Church State
+  const [platformSettings, setPlatformSettings] = useState<PlatformSettings>({
+    appName: 'Minha Igreja',
+    tagline: 'Conectando você à sua comunidade de fé'
+  });
+  const [activeChurches, setActiveChurches] = useState<ChurchTenant[]>([]);
+  const [managedChurchesState, setManagedChurchesState] = useState<ChurchTenant[]>([]);
+  const [activeChurch, setActiveChurch] = useState<ChurchTenant | null>(null);
+  const [allChurchesForOwner, setAllChurchesForOwner] = useState<ChurchTenant[]>([]);
+  const [allPlatformUsers, setAllPlatformUsers] = useState<PlatformUser[]>([]);
+  const [isCreatingAdditionalChurch, setIsCreatingAdditionalChurch] = useState<boolean>(false);
 
-  // Firebase Auth & Cloud Registry State
+  // Current Church Data State (starts empty)
+  const [churchInfo, setChurchInfoState] = useState<ChurchInfo>(INITIAL_CHURCH_INFO);
+  const [bulletins, setBulletinsState] = useState<Bulletin[]>([]);
+  const [birthdays, setBirthdaysState] = useState<BirthdayPerson[]>([]);
+  const [deaconSchedules, setDeaconSchedulesState] = useState<DeaconScheduleItem[]>([]);
+  const [banners, setBannersState] = useState<Banner[]>([]);
+  const [settings, setSettingsState] = useState<AppSettings>(() =>
+    ChurchStorageService.getSettings()
+  );
+
+  // Firebase Auth & Platform User State
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [currentManagerAccount, setCurrentManagerAccount] = useState<ChurchManagerAccount | null>(null);
+  const [platformUser, setPlatformUser] = useState<PlatformUser | null>(null);
+  const [currentManagerAccount, setCurrentManagerAccount] = useState<ChurchManagerAccount | null>(
+    null
+  );
   const [churchRegistry, setChurchRegistry] = useState<ChurchRegistry | null>(null);
   const [allManagers, setAllManagers] = useState<ChurchManagerAccount[]>([]);
   const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
-  const [localFallbackAuth, setLocalFallbackAuth] = useState<boolean>(false);
 
   const [selectedBulletinForReader, setSelectedBulletinForReader] = useState<Bulletin | null>(null);
 
   // Bible Local User Data
-  const [notes, setNotesState] = useState<UserBibleNote[]>(() => ChurchStorageService.getUserNotes());
-  const [favorites, setFavoritesState] = useState<UserFavoriteVerse[]>(() => ChurchStorageService.getUserFavorites());
+  const [notes, setNotesState] = useState<UserBibleNote[]>(() =>
+    ChurchStorageService.getUserNotes()
+  );
+  const [favorites, setFavoritesState] = useState<UserFavoriteVerse[]>(() =>
+    ChurchStorageService.getUserFavorites()
+  );
 
   // UI Dialogs & Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
-  // Derived manager permissions
-  const isApprovedCloudManager = Boolean(
-    firebaseUser && currentManagerAccount && currentManagerAccount.status === 'approved'
+  const [emailVerifiedFlag, setEmailVerifiedFlag] = useState<boolean>(false);
+  const isEmailVerified = Boolean(firebaseUser && (firebaseUser.emailVerified || emailVerifiedFlag));
+
+  // Permissions verified strictly from Firestore (`users/{uid}` and `churches/{churchId}`)
+  // SECURITY: Only PLATFORM_OWNER_EMAIL (studiojpgloria@gmail.com) with verified email is owner
+  const isPlatformOwner = Boolean(
+    firebaseUser &&
+      isEmailVerified &&
+      isPlatformOwnerEmail(firebaseUser.email, true)
   );
-  const isManagerAuthenticated = isApprovedCloudManager || localFallbackAuth;
-  const isPrimaryOwner = Boolean(
-    (firebaseUser &&
-      (currentManagerAccount?.role === 'owner' ||
-        churchRegistry?.ownerUid === firebaseUser.uid ||
-        firebaseUser.email === 'cantordaipb@gmail.com')) ||
-      localFallbackAuth
+
+  // Determine the logged-in user's team role on the activeChurch ('admin' | 'editor' | null)
+  // SECURITY: Team invites and email-based permissions require a verified email (isEmailVerified)
+  const currentUserTeamRole: TeamRole | null = React.useMemo(() => {
+    if (!firebaseUser || !isEmailVerified) return null;
+    if (isPlatformOwner) return 'admin';
+    if (!activeChurch) return null;
+
+    const emailLower = (firebaseUser.email || '').toLowerCase().trim();
+    if (
+      activeChurch.ownerUid === firebaseUser.uid ||
+      (emailLower && activeChurch.ownerEmail?.toLowerCase().trim() === emailLower)
+    ) {
+      return 'admin';
+    }
+
+    if (
+      activeChurch.adminUids?.includes(firebaseUser.uid) ||
+      (emailLower && activeChurch.adminEmails?.includes(emailLower))
+    ) {
+      return 'admin';
+    }
+
+    const memberEntry = activeChurch.teamMembers?.find((m) => m.email === emailLower);
+    if (memberEntry) {
+      return memberEntry.role;
+    }
+
+    if (
+      activeChurch.editorUids?.includes(firebaseUser.uid) ||
+      (emailLower && activeChurch.editorEmails?.includes(emailLower))
+    ) {
+      return 'editor';
+    }
+
+    if (
+      activeChurch.managerUids?.includes(firebaseUser.uid) ||
+      (emailLower && activeChurch.managerEmails?.includes(emailLower))
+    ) {
+      return 'admin';
+    }
+
+    return null;
+  }, [firebaseUser, isEmailVerified, isPlatformOwner, activeChurch]);
+
+  const isChurchAdmin = currentUserTeamRole === 'admin';
+  const canManageActiveChurch = Boolean(
+    firebaseUser &&
+      isEmailVerified &&
+      platformUser?.status !== 'revoked' &&
+      (currentUserTeamRole === 'admin' || currentUserTeamRole === 'editor')
   );
+
+  const isManagerAuthenticated = canManageActiveChurch;
+  const isPrimaryOwner = isChurchAdmin;
+
+  // All churches this user can manage (for the multi-church selector in ManagerView)
+  const managedChurches = React.useMemo(() => {
+    if (!isEmailVerified) return [];
+    if (isPlatformOwner) {
+      return allChurchesForOwner;
+    }
+    return managedChurchesState;
+  }, [isEmailVerified, isPlatformOwner, allChurchesForOwner, managedChurchesState]);
+
+  const needsChurchOnboarding = Boolean(
+    firebaseUser &&
+      isEmailVerified &&
+      (isCreatingAdditionalChurch ||
+        (!activeChurch && managedChurches.length === 0))
+  );
+
+  // Helper to stamp author/editor audit fields on publications
+  const getAuditActor = () => {
+    const email = (firebaseUser?.email || platformUser?.email || '').toLowerCase().trim();
+    const name =
+      platformUser?.name ||
+      firebaseUser?.displayName ||
+      (email ? email.split('@')[0] : 'Gestor');
+    return { name, email, nowIso: new Date().toISOString() };
+  };
 
   const setIsMobileAppPreview = (val: boolean) => {
     setIsMobileAppPreviewState(val);
@@ -189,7 +395,6 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCacheMetadata(ChurchStorageService.touchCacheMeta());
   };
 
-  // Toast handler
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = `${Date.now()}-${Math.random()}`;
     setToasts((prev) => [...prev, { id, message, type }]);
@@ -206,125 +411,383 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setConfirmDialog(null);
   };
 
-  const cloudHandlers = {
-    onChurchInfo: (info: ChurchInfo) => {
-      setChurchInfoState(info);
-      ChurchStorageService.saveChurchInfo(info);
-      setIsCloudSynced(true);
-    },
-    onBulletins: (list: Bulletin[]) => {
-      setBulletinsState(list);
-      ChurchStorageService.saveBulletins(list);
-      setIsCloudSynced(true);
-    },
-    onBirthdays: (list: BirthdayPerson[]) => {
-      setBirthdaysState(list);
-      ChurchStorageService.saveBirthdays(list);
-      setIsCloudSynced(true);
-    },
-    onDeaconSchedules: (list: DeaconScheduleItem[]) => {
-      setDeaconSchedulesState(list);
-      ChurchStorageService.saveDeaconSchedules(list);
-      setIsCloudSynced(true);
-    },
-    onBanners: (list: Banner[]) => {
-      setBannersState(list);
-      ChurchStorageService.saveBanners(list);
-      setIsCloudSynced(true);
-    },
-    onSettings: (cfg: AppSettings) => {
-      setSettingsState(cfg);
-      ChurchStorageService.saveSettings(cfg);
-      setIsCloudSynced(true);
+  // Update URL when view changes
+  const setCurrentView = (view: ViewMode) => {
+    setCurrentViewState(view);
+    if (typeof window === 'undefined') return;
+    const slug = activeChurch?.slug;
+    let targetPath = window.location.pathname;
+    if (view === 'directory') {
+      targetPath = '/';
+    } else if (view === 'admin') {
+      targetPath = '/admin';
+    } else if (view === 'manager') {
+      targetPath = slug ? `/${slug}/gestor` : '/gestor';
+    } else if (slug) {
+      targetPath = `/${slug}`;
+    } else {
+      targetPath = '/';
+    }
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
     }
   };
 
-  // 1. Subscribe to Cloud Public Church Data & Registry on boot + immediate fetch
+  // Requirement 1: Dynamic church theme color & exact document.title per screen
   useEffect(() => {
-    void CloudChurchService.fetchAllPublicChurchDataFromCloud(cloudHandlers);
+    const isPlatformScreen =
+      currentView === 'directory' || currentView === 'admin' || currentView === 'manager' || !activeChurch;
+    const color = isPlatformScreen ? '#344E41' : activeChurch?.themeColor || '#344E41';
+    const platformBrand = platformSettings.appName || 'Minha Igreja';
 
-    const unsubRegistry = CloudChurchService.subscribeToRegistry((reg) => {
-      setChurchRegistry(reg);
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--church-theme', color);
+
+      if (currentView === 'directory') {
+        document.title = platformBrand;
+      } else if (currentView === 'admin') {
+        document.title = `Administração — ${platformBrand}`;
+      } else if (currentView === 'manager') {
+        document.title = `Portal do Gestor — ${platformBrand}`;
+      } else if (activeChurch?.name) {
+        document.title = `${activeChurch.name} — ${platformBrand}`;
+      } else {
+        document.title = platformBrand;
+      }
+    }
+  }, [activeChurch, currentView, platformSettings.appName]);
+
+  // 1. Subscribe to Platform Settings & Active Churches Directory (no demo fallback!)
+  useEffect(() => {
+    const unsubPlatform = CloudChurchService.subscribeToPlatformSettings((cfg) => {
+      setPlatformSettings(cfg);
+    });
+
+    const unsubDirectory = CloudChurchService.subscribeToActiveChurches((list) => {
+      setActiveChurches(list);
       setIsCloudSynced(true);
     });
 
-    const unsubPublicData = CloudChurchService.subscribeToPublicChurchData(cloudHandlers);
-
     return () => {
-      unsubRegistry();
-      unsubPublicData();
+      unsubPlatform();
+      unsubDirectory();
     };
   }, []);
 
-  // 2. Listen to Firebase Auth State & Current Manager Document
+  // 2. Resolve Initial Route or Saved Church Slug on Boot & Popstate
   useEffect(() => {
-    let unsubManagerDoc: (() => void) | null = null;
-    let unsubAllManagers: (() => void) | null = null;
-
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      setFirebaseUser(user);
-
-      if (unsubManagerDoc) {
-        unsubManagerDoc();
-        unsubManagerDoc = null;
-      }
-      if (unsubAllManagers) {
-        unsubAllManagers();
-        unsubAllManagers = null;
-      }
-
-      if (!user) {
-        setCurrentManagerAccount(null);
-        setAllManagers([]);
+    const resolveRoute = async () => {
+      const route = parseUrlRoute(window.location.pathname);
+      if (route.mode === 'admin') {
+        setCurrentViewState('admin');
         return;
       }
 
-      // Listen in real-time to this user's church_managers/{uid} document
-      unsubManagerDoc = onSnapshot(
-        doc(db, 'church_managers', user.uid),
+      if (route.mode === 'manager' && !route.slug) {
+        setCurrentViewState('manager');
+        return;
+      }
+
+      const targetSlug = route.slug || ChurchStorageService.getSelectedChurchSlug();
+      if (!targetSlug) {
+        setActiveChurch(null);
+        setChurchInfoState(INITIAL_CHURCH_INFO);
+        setCurrentViewState('directory');
+        return;
+      }
+
+      const found =
+        activeChurches.find((c) => c.slug === targetSlug || c.id === targetSlug) ||
+        (await CloudChurchService.getChurchBySlug(targetSlug));
+
+      if (found) {
+        if (found.status === 'bloqueada' && !isPlatformOwner) {
+          showToast('Esta igreja está temporariamente indisponível na plataforma.', 'error');
+          ChurchStorageService.saveSelectedChurchSlug('');
+          setActiveChurch(null);
+          setChurchInfoState(INITIAL_CHURCH_INFO);
+          setCurrentViewState('directory');
+          window.history.replaceState({}, '', '/');
+          return;
+        }
+        setActiveChurch(found);
+        ChurchStorageService.saveSelectedChurchSlug(found.slug);
+        if (route.mode === 'manager') {
+          setCurrentViewState('manager');
+        } else if (route.mode === 'directory' && window.location.pathname === '/') {
+          window.history.replaceState({}, '', `/${found.slug}`);
+          setCurrentViewState('home');
+        }
+      } else {
+        // Saved slug or route slug does not exist in Firestore -> clean up and go to directory
+        ChurchStorageService.saveSelectedChurchSlug('');
+        setActiveChurch(null);
+        setChurchInfoState(INITIAL_CHURCH_INFO);
+        if (route.mode === 'manager') {
+          setCurrentViewState('manager');
+          window.history.replaceState({}, '', '/gestor');
+        } else {
+          setCurrentViewState('directory');
+          window.history.replaceState({}, '', '/');
+        }
+      }
+    };
+
+    void resolveRoute();
+
+    const handlePopState = () => {
+      const r = parseUrlRoute(window.location.pathname);
+      if (r.mode === 'admin') {
+        setCurrentViewState('admin');
+      } else if (r.mode === 'directory') {
+        setActiveChurch(null);
+        setChurchInfoState(INITIAL_CHURCH_INFO);
+        setCurrentViewState('directory');
+      } else if (r.mode === 'manager') {
+        if (r.slug) void selectChurchBySlug(r.slug, 'manager');
+        else {
+          setActiveChurch(null);
+          setChurchInfoState(INITIAL_CHURCH_INFO);
+          setCurrentViewState('manager');
+        }
+      } else if (r.slug) {
+        void selectChurchBySlug(r.slug, 'home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activeChurches.length, isPlatformOwner]);
+
+  // 3. Subscribe in real-time to Active Church and its Subcollections
+  useEffect(() => {
+    if (!activeChurch?.id) {
+      setChurchInfoState(INITIAL_CHURCH_INFO);
+      setBulletinsState([]);
+      setBirthdaysState([]);
+      setDeaconSchedulesState([]);
+      setBannersState([]);
+      return;
+    }
+
+    const unsub = CloudChurchService.subscribeToChurchAndSubcollections(activeChurch.id, {
+      onTenant: (tenant) => {
+        if (!tenant) {
+          setActiveChurch(null);
+          setChurchInfoState(INITIAL_CHURCH_INFO);
+          return;
+        }
+        setActiveChurch(tenant);
+        const nextInfo: ChurchInfo = {
+          name: tenant.name || '',
+          tagline: tenant.tagline || '',
+          aboutHistory: tenant.aboutHistory || '',
+          missionVision: tenant.missionVision || '',
+          address: tenant.address || '',
+          cityStateZip:
+            tenant.cityStateZip ||
+            `${tenant.city || ''}${tenant.state ? ` - ${tenant.state}` : ''}`,
+          googleMapsUrl: tenant.googleMapsUrl || '',
+          primaryPhone: tenant.primaryPhone || '',
+          secondaryPhone: tenant.secondaryPhone || '',
+          whatsappNumber: tenant.whatsappNumber || '',
+          whatsappDefaultMessage: tenant.whatsappDefaultMessage || '',
+          email: tenant.email || '',
+          instagramUrl: tenant.instagramUrl || '',
+          youtubeUrl: tenant.youtubeUrl || '',
+          facebookUrl: tenant.facebookUrl || '',
+          logoUrl: tenant.logoUrl || '',
+          schedules: tenant.schedules || [],
+          leadership: tenant.leadership || []
+        };
+        setChurchInfoState(nextInfo);
+        ChurchStorageService.saveChurchInfo(nextInfo);
+        setChurchRegistry({
+          churchId: tenant.id,
+          churchName: tenant.name,
+          ownerUid: tenant.ownerUid,
+          ownerEmail: tenant.ownerEmail,
+          ownerName: tenant.ownerName || tenant.ownerEmail,
+          createdAt: tenant.createdAt
+        });
+        setIsCloudSynced(true);
+      },
+      onBulletins: (list) => {
+        setBulletinsState(list);
+        ChurchStorageService.saveBulletins(list);
+        setIsCloudSynced(true);
+      },
+      onBirthdays: (list) => {
+        setBirthdaysState(list);
+        ChurchStorageService.saveBirthdays(list);
+        setIsCloudSynced(true);
+      },
+      onDeaconSchedules: (list) => {
+        setDeaconSchedulesState(list);
+        ChurchStorageService.saveDeaconSchedules(list);
+        setIsCloudSynced(true);
+      },
+      onBanners: (list) => {
+        setBannersState(list);
+        ChurchStorageService.saveBanners(list);
+        setIsCloudSynced(true);
+      },
+      onLeadership: (list) => {
+        if (list.length > 0) {
+          setChurchInfoState((prev) => {
+            const updated = { ...prev, leadership: list };
+            ChurchStorageService.saveChurchInfo(updated);
+            return updated;
+          });
+        }
+      },
+      onSchedules: (list) => {
+        if (list.length > 0) {
+          setChurchInfoState((prev) => {
+            const updated = { ...prev, schedules: list };
+            ChurchStorageService.saveChurchInfo(updated);
+            return updated;
+          });
+        }
+      }
+    });
+
+    return () => unsub();
+  }, [activeChurch?.id]);
+
+  // 4. Listen to Firebase Auth State, `users/{uid}`, and `managedChurches`
+  useEffect(() => {
+    let unsubUserDoc: (() => void) | null = null;
+    let unsubManagedChurches: (() => void) | null = null;
+    let unsubOwnerChurches: (() => void) | null = null;
+    let unsubOwnerUsers: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      setEmailVerifiedFlag(Boolean(user?.emailVerified));
+
+      if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+      }
+      if (unsubManagedChurches) {
+        unsubManagedChurches();
+        unsubManagedChurches = null;
+      }
+      if (unsubOwnerChurches) {
+        unsubOwnerChurches();
+        unsubOwnerChurches = null;
+      }
+      if (unsubOwnerUsers) {
+        unsubOwnerUsers();
+        unsubOwnerUsers = null;
+      }
+
+      if (!user) {
+        setPlatformUser(null);
+        setCurrentManagerAccount(null);
+        setAllManagers([]);
+        setManagedChurchesState([]);
+        setAllChurchesForOwner([]);
+        setAllPlatformUsers([]);
+        return;
+      }
+
+      try {
+        const resolved = await CloudChurchService.resolveOrCreatePlatformUser(user);
+        setPlatformUser(resolved);
+      } catch (e) {
+        console.warn('Error resolving platform user:', e);
+      }
+
+      if (user.email && user.emailVerified) {
+        unsubManagedChurches = CloudChurchService.subscribeToManagedChurches(
+          user.uid,
+          user.email,
+          (chList) => {
+            setManagedChurchesState(chList);
+          }
+        );
+      }
+
+      unsubUserDoc = onSnapshot(
+        doc(db, 'users', user.uid),
         (snap) => {
           if (snap.exists()) {
-            const mgr = snap.data() as ChurchManagerAccount;
-            setCurrentManagerAccount(mgr);
+            const pUser = { ...(snap.data() as PlatformUser), uid: snap.id };
+            setPlatformUser(pUser);
+            setCurrentManagerAccount({
+              uid: pUser.uid,
+              email: pUser.email,
+              name: pUser.name,
+              role: isPlatformOwnerEmail(user.email, Boolean(user.emailVerified)) ? 'owner' : 'gestor',
+              status: pUser.status || 'approved',
+              churchId: pUser.churchId,
+              churchSlug: pUser.churchSlug,
+              requestedAt: pUser.createdAt
+            });
 
-            // If approved, also subscribe to all managers list so Primary Owner can approve/revoke
-            if (mgr.status === 'approved' && !unsubAllManagers) {
-              unsubAllManagers = CloudChurchService.subscribeToManagersList((list) => {
-                setAllManagers(list);
-              });
+            if (isPlatformOwnerEmail(user.email, Boolean(user.emailVerified))) {
+              if (!unsubOwnerChurches) {
+                unsubOwnerChurches = CloudChurchService.subscribeToAllChurchesForOwner((chList) => {
+                  setAllChurchesForOwner(chList);
+                });
+              }
+              if (!unsubOwnerUsers) {
+                unsubOwnerUsers = CloudChurchService.subscribeToAllUsersForOwner((uList) => {
+                  setAllPlatformUsers(uList);
+                });
+              }
             }
           }
         },
-        (err) => {
-          console.warn('Manager profile listener:', err);
-        }
+        (err) => console.warn('User profile listener:', err)
       );
     });
 
     return () => {
       unsubAuth();
-      if (unsubManagerDoc) unsubManagerDoc();
-      if (unsubAllManagers) unsubAllManagers();
+      if (unsubUserDoc) unsubUserDoc();
+      if (unsubManagedChurches) unsubManagedChurches();
+      if (unsubOwnerChurches) unsubOwnerChurches();
+      if (unsubOwnerUsers) unsubOwnerUsers();
     };
   }, []);
 
-  // Sync Bible API config whenever settings change
+  // Auto-select a managed church when inside the Manager Portal if none is currently selected
+  useEffect(() => {
+    if (
+      currentView === 'manager' &&
+      firebaseUser &&
+      !activeChurch &&
+      !isCreatingAdditionalChurch &&
+      managedChurches.length > 0
+    ) {
+      const preferredSlug =
+        platformUser?.churchSlug &&
+        managedChurches.some((c) => c.slug === platformUser.churchSlug)
+          ? platformUser.churchSlug
+          : managedChurches[0].slug;
+      void selectChurchBySlug(preferredSlug, 'manager');
+    }
+  }, [
+    currentView,
+    firebaseUser,
+    activeChurch,
+    isCreatingAdditionalChurch,
+    managedChurches,
+    platformUser?.churchSlug
+  ]);
+
+  // Sync Bible API config
   useEffect(() => {
     if (settings.bibleConfig) {
       BibleApiService.setConfig(settings.bibleConfig);
     }
   }, [settings.bibleConfig]);
 
-  // Listen for IndexedDB recovery or cross-tab localStorage updates
+  // Listen for cross-tab localStorage updates on personal Bible notes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const latestNotes = ChurchStorageService.getUserNotes();
-      if (latestNotes.length !== notes.length) {
-        setNotesState(latestNotes);
-      }
-      refreshCacheMetadata();
-    }, 400);
-
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === STORAGE_KEYS.USER_NOTES) {
         setNotesState(ChurchStorageService.getUserNotes());
@@ -336,79 +799,369 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     window.addEventListener('storage', handleStorageChange);
     return () => {
-      clearTimeout(timer);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
 
-  // Helper to persist to Cloud if authenticated as approved manager
-  const persistToCloudIfAuthorized = async (
-    moduleId: 'info' | 'bulletins' | 'birthdays' | 'deacons' | 'banners' | 'settings',
-    data: unknown
-  ) => {
-    if (auth.currentUser) {
-      try {
-        await CloudChurchService.saveModuleToCloud(moduleId, data);
-        setIsCloudSynced(true);
-      } catch (e) {
-        console.warn(`Erro ao sincronizar módulo ${moduleId} na nuvem:`, e);
+  // Multi-Church Navigation Actions
+  const selectChurchBySlug = async (
+    slug: string,
+    targetView: ViewMode = 'home'
+  ): Promise<boolean> => {
+    const clean = slug.trim().toLowerCase();
+    const localMatch =
+      activeChurches.find((c) => c.slug === clean || c.id === clean) ||
+      managedChurches.find((c) => c.slug === clean || c.id === clean) ||
+      allChurchesForOwner.find((c) => c.slug === clean || c.id === clean);
+    const tenant = localMatch || (await CloudChurchService.getChurchBySlug(clean));
+
+    if (!tenant) {
+      showToast('Igreja não encontrada.', 'error');
+      return false;
+    }
+
+    if (tenant.status === 'bloqueada' && !isPlatformOwner) {
+      showToast(
+        'Esta igreja está temporariamente bloqueada pelo administrador da plataforma.',
+        'error'
+      );
+      return false;
+    }
+
+    setIsCreatingAdditionalChurch(false);
+    setActiveChurch(tenant);
+    ChurchStorageService.saveSelectedChurchSlug(tenant.slug);
+    setCurrentViewState(targetView);
+
+    if (typeof window !== 'undefined') {
+      const nextPath = targetView === 'manager' ? `/${tenant.slug}/gestor` : `/${tenant.slug}`;
+      if (window.location.pathname !== nextPath) {
+        window.history.pushState({}, '', nextPath);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    return true;
+  };
+
+  const switchChurch = () => {
+    setIsCreatingAdditionalChurch(false);
+    ChurchStorageService.saveSelectedChurchSlug('');
+    setActiveChurch(null);
+    setChurchInfoState(INITIAL_CHURCH_INFO);
+    setBulletinsState([]);
+    setBirthdaysState([]);
+    setDeaconSchedulesState([]);
+    setBannersState([]);
+    setCurrentViewState('directory');
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // Requirement 2: Clicking "Sou gestor" from the initial screen opens the Platform Manager Portal cleanly without last visited church's header/menu
+  const openManagerPortalFromDirectory = () => {
+    setIsCreatingAdditionalChurch(false);
+    if (firebaseUser && managedChurches.length > 0) {
+      const targetSlug =
+        platformUser?.churchSlug &&
+        managedChurches.some((c) => c.slug === platformUser.churchSlug)
+          ? platformUser.churchSlug
+          : managedChurches[0].slug;
+      void selectChurchBySlug(targetSlug, 'manager');
+    } else {
+      setActiveChurch(null);
+      setChurchInfoState(INITIAL_CHURCH_INFO);
+      setCurrentViewState('manager');
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/gestor');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     }
   };
 
-  // Pull latest data directly from Firestore into current app state
-  const pullLatestFromCloud = async () => {
-    try {
-      const count = await CloudChurchService.fetchAllPublicChurchDataFromCloud(cloudHandlers);
-      const reg = await CloudChurchService.getChurchRegistry();
-      if (reg) setChurchRegistry(reg);
-      if (count > 0) {
-        showToast('Dados atualizados com sucesso a partir do banco de dados Firebase!');
-      } else {
-        showToast(
-          'O banco no Firebase ainda não recebeu dados. Na Vercel, clique em "Sincronizar Dados Atuais para o Firebase"!',
-          'info'
-        );
-      }
-    } catch {
-      showToast('Erro ao buscar dados no Firebase.', 'error');
-    }
-  };
-
-  // Sync all current local state to Firestore
-  const syncLocalDataToCloud = async () => {
+  // Onboarding Wizard & Church Creation
+  const createNewChurchInCloud = async (wizardData: {
+    name: string;
+    slug: string;
+    logoUrl?: string;
+    themeColor?: string;
+    city: string;
+    state: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    primaryPhone?: string;
+    whatsappNumber?: string;
+    email?: string;
+    instagramUrl?: string;
+    youtubeUrl?: string;
+    facebookUrl?: string;
+    tagline?: string;
+    schedules?: ScheduleItem[];
+  }): Promise<ChurchTenant> => {
     if (!auth.currentUser) {
-      showToast('Faça login como Gestor para sincronizar no banco de dados.', 'error');
+      throw new Error('Faça login para cadastrar sua igreja.');
+    }
+    const created = await CloudChurchService.createChurchForManager(auth.currentUser, wizardData);
+    setIsCreatingAdditionalChurch(false);
+    setActiveChurch(created);
+    ChurchStorageService.saveSelectedChurchSlug(created.slug);
+    setBulletinsState([]);
+    setBirthdaysState([]);
+    setDeaconSchedulesState([]);
+    setBannersState([]);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', `/${created.slug}/gestor`);
+    }
+    showToast(`Igreja "${created.name}" criada com sucesso! Link: /${created.slug}`);
+    return created;
+  };
+
+  const updateChurchSlugAndMeta = async (extra: {
+    slug?: string;
+    city?: string;
+    state?: string;
+    themeColor?: string;
+    latitude?: number;
+    longitude?: number;
+  }) => {
+    if (!activeChurch || !isChurchAdmin) {
+      showToast('Apenas Administradores podem alterar os dados da igreja.', 'error');
+      return;
+    }
+    if (extra.slug) {
+      const clean = slugifyChurchName(extra.slug);
+      const ok = await CloudChurchService.isSlugAvailable(clean, activeChurch.id);
+      if (!ok) {
+        showToast('Este link (slug) já está sendo usado por outra igreja.', 'error');
+        return;
+      }
+      extra.slug = clean;
+    }
+    await CloudChurchService.saveChurchTenantInfo(activeChurch.id, churchInfo, extra);
+    if (extra.slug) {
+      ChurchStorageService.saveSelectedChurchSlug(extra.slug);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({}, '', `/${extra.slug}/gestor`);
+      }
+    }
+    showToast('Configurações de identificação e localização da igreja atualizadas!');
+  };
+
+  // Team Management (Administrador vs Editor)
+  const inviteTeamMemberByEmail = async (email: string, role: TeamRole) => {
+    if (!activeChurch || !isChurchAdmin) {
+      showToast('Apenas Administradores podem gerenciar a equipe.', 'error');
+      return;
+    }
+    const actor = getAuditActor();
+    await CloudChurchService.inviteTeamMember(activeChurch.id, email, role, actor.email);
+    showToast(
+      `Convite enviado para ${email.toLowerCase().trim()} como ${
+        role === 'admin' ? 'Administrador' : 'Editor'
+      }!`
+    );
+  };
+
+  const updateTeamMemberRoleByEmail = async (email: string, role: TeamRole) => {
+    if (!activeChurch || !isChurchAdmin) {
+      showToast('Apenas Administradores podem alterar níveis da equipe.', 'error');
       return;
     }
     try {
-      await CloudChurchService.seedAllChurchDataToCloud({
-        churchInfo,
-        bulletins,
-        birthdays,
-        deaconSchedules,
-        banners,
-        settings
-      });
+      await CloudChurchService.updateTeamMemberRole(activeChurch.id, email, role);
+      showToast(
+        `Nível de ${email} alterado para ${role === 'admin' ? 'Administrador' : 'Editor'}.`
+      );
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Erro ao alterar nível.', 'error');
+    }
+  };
+
+  const inviteCoManagerByEmail = async (email: string) => {
+    await inviteTeamMemberByEmail(email, 'admin');
+  };
+
+  const removeCoManagerEmail = async (email: string) => {
+    if (!activeChurch || !isChurchAdmin) {
+      showToast('Apenas Administradores podem remover membros da equipe.', 'error');
+      return;
+    }
+    try {
+      await CloudChurchService.removeManagerEmailFromChurch(activeChurch.id, email);
+      showToast(`Membro ${email} removido da equipe.`, 'info');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Erro ao remover membro.', 'error');
+    }
+  };
+
+  // Owner /admin Actions
+  const updatePlatformSettings = async (cfg: PlatformSettings) => {
+    if (!isPlatformOwner) {
+      showToast('Apenas o proprietário da plataforma pode alterar a marca global.', 'error');
+      return;
+    }
+    await CloudChurchService.savePlatformSettings(cfg);
+    showToast('Nome e slogan da plataforma atualizados!');
+  };
+
+  const setChurchStatusByOwner = async (churchId: string, status: ChurchStatus) => {
+    if (!isPlatformOwner) return;
+    await CloudChurchService.updateChurchStatusByOwner(churchId, status);
+    showToast(`Status da igreja atualizado para "${status.toUpperCase()}".`);
+  };
+
+  const deleteChurchByOwner = async (churchId: string) => {
+    if (!isPlatformOwner) return;
+    await CloudChurchService.deleteChurchByOwner(churchId);
+    if (activeChurch?.id === churchId) {
+      switchChurch();
+    }
+    showToast('Igreja e todas as suas subcoleções foram excluídas.');
+  };
+
+  const wipeAllPlatformDataByOwner = async () => {
+    if (!isPlatformOwner) {
+      showToast('Apenas o owner da plataforma pode executar esta ação.', 'error');
+      return;
+    }
+    await CloudChurchService.wipeAllPlatformDataByOwner();
+    ChurchStorageService.clearAllChurchCacheFromDevice();
+    setActiveChurch(null);
+    setActiveChurches([]);
+    setManagedChurchesState([]);
+    setAllChurchesForOwner([]);
+    setChurchInfoState(INITIAL_CHURCH_INFO);
+    setBulletinsState([]);
+    setBirthdaysState([]);
+    setDeaconSchedulesState([]);
+    setBannersState([]);
+    showToast('Todos os dados de igrejas e subcoleções foram apagados da plataforma!');
+  };
+
+  // Pull & Sync Actions
+  const pullLatestFromCloud = async () => {
+    if (!activeChurch) {
+      showToast('Selecione uma igreja primeiro.', 'info');
+      return;
+    }
+    const fresh = await CloudChurchService.getChurchBySlug(activeChurch.slug);
+    if (fresh) {
+      setActiveChurch(fresh);
+      showToast('Dados atualizados com sucesso a partir do Firebase!');
+    }
+  };
+
+  const resetAllChurchContentToBlank = async () => {
+    if (!isChurchAdmin) {
+      showToast('Apenas Administradores podem zerar o conteúdo da igreja.', 'error');
+      return;
+    }
+    const blankInfo: ChurchInfo = {
+      ...INITIAL_CHURCH_INFO,
+      name: activeChurch?.name || '',
+      schedules: [],
+      leadership: []
+    };
+    const blankSettings: AppSettings = {
+      ...settings,
+      appName: 'Minha Igreja',
+      managerEmail: '',
+      lastUpdated: new Date().toISOString()
+    };
+
+    setChurchInfoState(blankInfo);
+    setBulletinsState([]);
+    setBirthdaysState([]);
+    setDeaconSchedulesState([]);
+    setBannersState([]);
+    setSettingsState(blankSettings);
+
+    ChurchStorageService.saveChurchInfo(blankInfo);
+    ChurchStorageService.saveBulletins([]);
+    ChurchStorageService.saveBirthdays([]);
+    ChurchStorageService.saveDeaconSchedules([]);
+    ChurchStorageService.saveBanners([]);
+    ChurchStorageService.saveSettings(blankSettings);
+
+    if (auth.currentUser && activeChurch) {
+      try {
+        await CloudChurchService.seedAllChurchDataToCloud(activeChurch.id, {
+          churchInfo: blankInfo,
+          bulletins: [],
+          birthdays: [],
+          deaconSchedules: [],
+          banners: [],
+          settings: blankSettings
+        });
+        setIsCloudSynced(true);
+        showToast('Conteúdo desta igreja zerado no Firebase!');
+      } catch {
+        showToast('Conteúdo local zerado, mas houve erro ao limpar o Firebase.', 'error');
+      }
+    } else {
+      showToast('Conteúdo local zerado!');
+    }
+  };
+
+  const syncLocalDataToCloud = async () => {
+    if (!auth.currentUser || !activeChurch) {
+      showToast('Faça login como Gestor de uma igreja para sincronizar.', 'error');
+      return;
+    }
+    try {
+      if (isChurchAdmin) {
+        await CloudChurchService.seedAllChurchDataToCloud(activeChurch.id, {
+          churchInfo,
+          bulletins,
+          birthdays,
+          deaconSchedules,
+          banners,
+          settings
+        });
+      } else {
+        await CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'boletins', bulletins);
+        await CloudChurchService.replaceSubcollectionItems(
+          activeChurch.id,
+          'aniversariantes',
+          birthdays
+        );
+        await CloudChurchService.replaceSubcollectionItems(
+          activeChurch.id,
+          'escalas',
+          deaconSchedules
+        );
+        await CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'banners', banners);
+      }
       setIsCloudSynced(true);
-      showToast('Todos os dados da igreja foram salvos no Banco de Dados em Nuvem!');
+      showToast('Dados sincronizados com sucesso no Firebase!');
     } catch {
       showToast('Erro ao sincronizar dados com o banco na nuvem.', 'error');
     }
   };
 
-  // Import a full JSON backup from a previous deployment and sync to Firestore
   const importFullChurchBackup = async (jsonText: string) => {
+    if (!isChurchAdmin) {
+      showToast('Apenas Administradores podem importar backups completos.', 'error');
+      return;
+    }
     try {
       const parsed = JSON.parse(jsonText);
       const nextInfo: ChurchInfo = parsed.churchInfo || churchInfo;
-      const nextBulletins: Bulletin[] = Array.isArray(parsed.bulletins) ? parsed.bulletins : bulletins;
-      const nextBirthdays: BirthdayPerson[] = Array.isArray(parsed.birthdays) ? parsed.birthdays : birthdays;
+      const nextBulletins: Bulletin[] = Array.isArray(parsed.bulletins)
+        ? parsed.bulletins
+        : bulletins;
+      const nextBirthdays: BirthdayPerson[] = Array.isArray(parsed.birthdays)
+        ? parsed.birthdays
+        : birthdays;
       const nextDeacons: DeaconScheduleItem[] = Array.isArray(parsed.deaconSchedules)
         ? parsed.deaconSchedules
         : deaconSchedules;
       const nextBanners: Banner[] = Array.isArray(parsed.banners) ? parsed.banners : banners;
-      const nextSettings: AppSettings = parsed.settings ? { ...settings, ...parsed.settings } : settings;
+      const nextSettings: AppSettings = parsed.settings
+        ? { ...settings, ...parsed.settings }
+        : settings;
 
       setChurchInfoState(nextInfo);
       setBulletinsState(nextBulletins);
@@ -424,8 +1177,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ChurchStorageService.saveBanners(nextBanners);
       ChurchStorageService.saveSettings(nextSettings);
 
-      if (isApprovedCloudManager) {
-        await CloudChurchService.seedAllChurchDataToCloud({
+      if (isManagerAuthenticated && activeChurch) {
+        await CloudChurchService.seedAllChurchDataToCloud(activeChurch.id, {
           churchInfo: nextInfo,
           bulletins: nextBulletins,
           birthdays: nextBirthdays,
@@ -435,7 +1188,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         });
         showToast('Backup importado e gravado com sucesso no Firebase!');
       } else {
-        showToast('Backup importado localmente! Faça login como Gestor para enviar ao Firebase.');
+        showToast('Backup importado localmente!');
       }
     } catch {
       showToast('Arquivo de backup inválido. Selecione um JSON válido.', 'error');
@@ -444,35 +1197,16 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // Cloud Authentication Actions
   const loginWithGoogleCloud = async (churchNameIfFirst?: string) => {
-    const targetChurchName = churchNameIfFirst?.trim() || churchInfo.name;
-    const { manager, isFirstOwner } = await CloudChurchService.authenticateWithGoogle(targetChurchName);
+    const { user, manager } = await CloudChurchService.authenticateWithGoogle(churchNameIfFirst);
+    setPlatformUser(user);
     setCurrentManagerAccount(manager);
 
-    if (isFirstOwner && manager.status === 'approved') {
-      const updatedInfo =
-        targetChurchName !== churchInfo.name ? { ...churchInfo, name: targetChurchName } : churchInfo;
-      if (targetChurchName !== churchInfo.name) {
-        setChurchInfoState(updatedInfo);
-        ChurchStorageService.saveChurchInfo(updatedInfo);
-      }
-      await CloudChurchService.seedAllChurchDataToCloud({
-        churchInfo: updatedInfo,
-        bulletins,
-        birthdays,
-        deaconSchedules,
-        banners,
-        settings
-      });
-      showToast('Conta de 1º Gestor (Principal) criada e igreja registrada no banco de dados!');
-    } else if (manager.status === 'approved') {
-      showToast(`Bem-vindo(a), ${manager.name}! Acesso de Gestor liberado.`);
-    } else if (manager.status === 'pending') {
-      showToast(
-        'Solicitação enviada! O 1º Gestor da igreja precisa aprovar seu acesso antes de você editar.',
-        'info'
-      );
+    if (user.churchSlug) {
+      await selectChurchBySlug(user.churchSlug, 'manager');
+      showToast(`Bem-vindo(a), ${user.name}! Painel de Gestão liberado.`);
     } else {
-      showToast('Seu acesso de gestor foi revogado pelo administrador principal.', 'error');
+      setCurrentViewState('manager');
+      showToast('Conta conectada! Preencha os dados abaixo para cadastrar sua igreja.');
     }
   };
 
@@ -482,90 +1216,140 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     pass: string,
     churchNameIfFirst?: string
   ) => {
-    const targetChurchName = churchNameIfFirst?.trim() || churchInfo.name;
-    const { manager, isFirstOwner } = await CloudChurchService.registerWithEmail(
+    const { user, manager } = await CloudChurchService.registerWithEmail(
       name,
       email,
       pass,
-      targetChurchName
+      churchNameIfFirst
     );
+    setPlatformUser(user);
     setCurrentManagerAccount(manager);
+    setEmailVerifiedFlag(Boolean(auth.currentUser?.emailVerified));
+    setCurrentViewState('manager');
+    showToast(
+      'Conta criada! Enviamos um link de confirmação para o seu e-mail. Confirme seu e-mail para liberar o acesso.',
+      'info'
+    );
+  };
 
-    if (isFirstOwner && manager.status === 'approved') {
-      const updatedInfo =
-        targetChurchName !== churchInfo.name ? { ...churchInfo, name: targetChurchName } : churchInfo;
-      if (targetChurchName !== churchInfo.name) {
-        setChurchInfoState(updatedInfo);
-        ChurchStorageService.saveChurchInfo(updatedInfo);
-      }
-      await CloudChurchService.seedAllChurchDataToCloud({
-        churchInfo: updatedInfo,
-        bulletins,
-        birthdays,
-        deaconSchedules,
-        banners,
-        settings
-      });
-      showToast('Conta de 1º Gestor criada com sucesso! Igreja vinculada no banco de dados.');
-    } else if (manager.status === 'pending') {
+  const loginManagerWithEmailCloud = async (email: string, pass: string) => {
+    const { user, manager } = await CloudChurchService.loginWithEmail(email, pass);
+    setPlatformUser(user);
+    setCurrentManagerAccount(manager);
+    const verified = Boolean(auth.currentUser?.emailVerified);
+    setEmailVerifiedFlag(verified);
+
+    if (!verified) {
+      setCurrentViewState('manager');
+      showToast('Confirme seu e-mail para liberar o acesso ao painel.', 'info');
+      return;
+    }
+
+    if (user.churchSlug) {
+      await selectChurchBySlug(user.churchSlug, 'manager');
+      showToast(`Bem-vindo(a) ao Painel de Gestão, ${user.name}!`);
+    } else {
+      setCurrentViewState('manager');
+      showToast(`Bem-vindo(a), ${user.name}! Cadastre sua igreja para começar.`);
+    }
+  };
+
+  const resendEmailVerification = async () => {
+    try {
+      await CloudChurchService.resendVerificationEmail();
+      showToast('Novo e-mail de verificação enviado! Verifique sua caixa de entrada e spam.');
+    } catch (e) {
       showToast(
-        'Cadastro recebido! Como esta igreja já possui um 1º Gestor, aguarde a liberação dele.',
-        'info'
+        e instanceof Error ? e.message : 'Aguarde alguns instantes antes de reenviar o e-mail.',
+        'error'
       );
     }
   };
 
-  const loginManagerWithEmailCloud = async (email: string, pass: string) => {
-    const { manager } = await CloudChurchService.loginWithEmail(email, pass);
-    setCurrentManagerAccount(manager);
-
-    if (manager.status === 'approved') {
-      showToast(`Bem-vindo(a) ao Painel de Gestão, ${manager.name}!`);
-    } else if (manager.status === 'pending') {
-      showToast('Sua conta ainda aguarda liberação do 1º Gestor da igreja.', 'info');
-    } else {
-      showToast('Seu acesso foi revogado pelo 1º Gestor.', 'error');
+  const checkEmailVerificationNow = async (): Promise<boolean> => {
+    try {
+      const { verified, platformUser: refreshedUser } =
+        await CloudChurchService.reloadAndCheckEmailVerified();
+      setEmailVerifiedFlag(verified);
+      if (auth.currentUser) {
+        setFirebaseUser(auth.currentUser);
+      }
+      if (verified && refreshedUser) {
+        setPlatformUser(refreshedUser);
+        if (auth.currentUser?.email) {
+          CloudChurchService.subscribeToManagedChurches(
+            auth.currentUser.uid,
+            auth.currentUser.email,
+            (chList) => {
+              setManagedChurchesState(chList);
+            }
+          );
+        }
+        if (refreshedUser.churchSlug) {
+          await selectChurchBySlug(refreshedUser.churchSlug, 'manager');
+        }
+        showToast('E-mail confirmado com sucesso! Acesso liberado.');
+        return true;
+      } else {
+        showToast(
+          'Seu e-mail ainda consta como não verificado. Clique no link enviado para sua caixa de entrada.',
+          'info'
+        );
+        return false;
+      }
+    } catch {
+      showToast('Não foi possível verificar o status do e-mail agora.', 'error');
+      return false;
     }
   };
 
   const approveOrRevokeManager = async (targetUid: string, status: ManagerApprovalStatus) => {
     if (!isPrimaryOwner) {
-      showToast('Apenas o 1º Gestor (Administrador Principal) pode aprovar ou revogar gestores.', 'error');
+      showToast('Sem permissão para alterar gestores.', 'error');
       return;
     }
     await CloudChurchService.updateManagerApprovalStatus(targetUid, status);
-    showToast(
-      status === 'approved'
-        ? 'Novo gestor liberado com sucesso para administrar esta igreja!'
-        : 'Acesso do gestor revogado.'
-    );
+    showToast(status === 'approved' ? 'Gestor aprovado!' : 'Acesso revogado.');
   };
 
   const removePendingManager = async (targetUid: string) => {
-    if (!isPrimaryOwner) {
-      showToast('Apenas o 1º Gestor pode excluir solicitações.', 'error');
-      return;
-    }
+    if (!isPrimaryOwner) return;
     await CloudChurchService.removeManagerAccount(targetUid);
-    showToast('Solicitação de gestor removida.');
+    showToast('Registro de gestor removido.');
   };
 
-  // Church Info Handlers
+  // Church Info Handlers (Administrador only)
   const updateChurchInfo = (info: ChurchInfo) => {
+    if (!isChurchAdmin) {
+      showToast('Apenas Administradores podem alterar os dados da igreja.', 'error');
+      return;
+    }
     setChurchInfoState(info);
     ChurchStorageService.saveChurchInfo(info);
-    void persistToCloudIfAuthorized('info', info);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.saveChurchTenantInfo(activeChurch.id, info);
+    }
     showToast('Informações da igreja salvas e sincronizadas!');
   };
 
-  // Bulletins Handlers
-  const currentBulletin = bulletins.find((b) => b.isCurrent) || bulletins[0];
+  // Requirement 10: "Último boletim" uses current date and ignores past items
+  const todayIso = new Date().toISOString().split('T')[0];
+  const nonExpiredBulletins = bulletins.filter((b) => b.editionDate >= todayIso);
+  const currentBulletin =
+    nonExpiredBulletins.find((b) => b.isCurrent) || nonExpiredBulletins[0];
 
+  // Bulletins Handlers (with Audit Trail)
   const addBulletin = (b: Omit<Bulletin, 'id' | 'createdAt'>) => {
+    const actor = getAuditActor();
     const newBulletin: Bulletin = {
       ...b,
       id: `bol-${Date.now()}`,
-      createdAt: new Date().toISOString()
+      createdAt: actor.nowIso,
+      createdByName: actor.name,
+      createdByEmail: actor.email,
+      updatedByName: actor.name,
+      updatedByEmail: actor.email,
+      updatedAt: actor.nowIso
     };
 
     let updatedList = [...bulletins];
@@ -576,14 +1360,27 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    void persistToCloudIfAuthorized('bulletins', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      if (newBulletin.isCurrent) {
+        void CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'boletins', updatedList);
+      } else {
+        void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'boletins', newBulletin);
+      }
+    }
     showToast('Novo boletim publicado e salvo no banco de dados!');
   };
 
   const updateBulletin = (id: string, b: Partial<Bulletin>) => {
+    const actor = getAuditActor();
     const updatedList = bulletins.map((item) => {
       if (item.id === id) {
-        return { ...item, ...b };
+        return {
+          ...item,
+          ...b,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedAt: actor.nowIso
+        };
       }
       if (b.isCurrent) {
         return { ...item, isCurrent: false };
@@ -593,7 +1390,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    void persistToCloudIfAuthorized('bulletins', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'boletins', updatedList);
+    }
     showToast('Boletim atualizado no banco de dados!');
   };
 
@@ -601,39 +1400,75 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = bulletins.filter((item) => item.id !== id);
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    void persistToCloudIfAuthorized('bulletins', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.deleteSubcollectionItem(activeChurch.id, 'boletins', id);
+    }
     showToast('Boletim excluído!');
   };
 
   const setCurrentBulletin = (id: string) => {
+    const actor = getAuditActor();
     const updatedList = bulletins.map((item) => ({
       ...item,
-      isCurrent: item.id === id
+      isCurrent: item.id === id,
+      ...(item.id === id
+        ? {
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedAt: actor.nowIso
+          }
+        : {})
     }));
     setBulletinsState(updatedList);
     ChurchStorageService.saveBulletins(updatedList);
-    void persistToCloudIfAuthorized('bulletins', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'boletins', updatedList);
+    }
     showToast('Boletim definido como atual!');
   };
 
-  // Birthdays Handlers
+  // Birthdays Handlers (with Audit Trail)
   const addBirthday = (person: Omit<BirthdayPerson, 'id'>) => {
+    const actor = getAuditActor();
     const newPerson: BirthdayPerson = {
       ...person,
-      id: `bday-${Date.now()}`
+      id: `bday-${Date.now()}`,
+      createdByName: actor.name,
+      createdByEmail: actor.email,
+      updatedByName: actor.name,
+      updatedByEmail: actor.email,
+      updatedAt: actor.nowIso
     };
     const updatedList = [...birthdays, newPerson];
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    void persistToCloudIfAuthorized('birthdays', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'aniversariantes', newPerson);
+    }
     showToast('Aniversariante cadastrado no banco de dados!');
   };
 
   const updateBirthday = (id: string, person: Partial<BirthdayPerson>) => {
-    const updatedList = birthdays.map((item) => (item.id === id ? { ...item, ...person } : item));
+    const actor = getAuditActor();
+    let targetItem: BirthdayPerson | undefined;
+    const updatedList = birthdays.map((item) => {
+      if (item.id === id) {
+        targetItem = {
+          ...item,
+          ...person,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedAt: actor.nowIso
+        };
+        return targetItem;
+      }
+      return item;
+    });
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    void persistToCloudIfAuthorized('birthdays', updatedList);
+    if (activeChurch && isManagerAuthenticated && targetItem) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'aniversariantes', targetItem);
+    }
     showToast('Aniversariante atualizado!');
   };
 
@@ -641,12 +1476,22 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = birthdays.filter((item) => item.id !== id);
     setBirthdaysState(updatedList);
     ChurchStorageService.saveBirthdays(updatedList);
-    void persistToCloudIfAuthorized('birthdays', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.deleteSubcollectionItem(activeChurch.id, 'aniversariantes', id);
+    }
     showToast('Aniversariante removido!');
   };
 
   const importBirthdaysCSV = (csvText: string): number => {
-    const parsed = ChurchStorageService.parseBirthdayCSV(csvText);
+    const actor = getAuditActor();
+    const parsed = ChurchStorageService.parseBirthdayCSV(csvText).map((p) => ({
+      ...p,
+      createdByName: actor.name,
+      createdByEmail: actor.email,
+      updatedByName: actor.name,
+      updatedByEmail: actor.email,
+      updatedAt: actor.nowIso
+    }));
     if (parsed.length === 0) {
       showToast('Nenhum registro válido encontrado no CSV.', 'error');
       return 0;
@@ -654,29 +1499,59 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const merged = [...birthdays, ...parsed];
     setBirthdaysState(merged);
     ChurchStorageService.saveBirthdays(merged);
-    void persistToCloudIfAuthorized('birthdays', merged);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.replaceSubcollectionItems(
+        activeChurch.id,
+        'aniversariantes',
+        merged
+      );
+    }
     showToast(`${parsed.length} aniversariantes importados e sincronizados!`);
     return parsed.length;
   };
 
-  // Deacon Schedules Handlers
+  // Deacon Schedules Handlers (with Audit Trail)
   const addDeaconSchedule = (item: Omit<DeaconScheduleItem, 'id'>) => {
+    const actor = getAuditActor();
     const newItem: DeaconScheduleItem = {
       ...item,
-      id: `deac-${Date.now()}`
+      id: `deac-${Date.now()}`,
+      createdByName: actor.name,
+      createdByEmail: actor.email,
+      updatedByName: actor.name,
+      updatedByEmail: actor.email,
+      updatedAt: actor.nowIso
     };
     const updatedList = [...deaconSchedules, newItem];
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
-    void persistToCloudIfAuthorized('deacons', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'escalas', newItem);
+    }
     showToast('Escala diaconal salva no banco de dados!');
   };
 
   const updateDeaconSchedule = (id: string, item: Partial<DeaconScheduleItem>) => {
-    const updatedList = deaconSchedules.map((s) => (s.id === id ? { ...s, ...item } : s));
+    const actor = getAuditActor();
+    let updatedTarget: DeaconScheduleItem | undefined;
+    const updatedList = deaconSchedules.map((s) => {
+      if (s.id === id) {
+        updatedTarget = {
+          ...s,
+          ...item,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedAt: actor.nowIso
+        };
+        return updatedTarget;
+      }
+      return s;
+    });
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
-    void persistToCloudIfAuthorized('deacons', updatedList);
+    if (activeChurch && isManagerAuthenticated && updatedTarget) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'escalas', updatedTarget);
+    }
     showToast('Escala diaconal atualizada!');
   };
 
@@ -684,11 +1559,13 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = deaconSchedules.filter((s) => s.id !== id);
     setDeaconSchedulesState(updatedList);
     ChurchStorageService.saveDeaconSchedules(updatedList);
-    void persistToCloudIfAuthorized('deacons', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.deleteSubcollectionItem(activeChurch.id, 'escalas', id);
+    }
     showToast('Escala diaconal excluída!');
   };
 
-  // Banners Handlers
+  // Banners Handlers (with Audit Trail)
   const getBannersByPosition = (pos: BannerPosition): Banner[] => {
     const now = new Date().toISOString().split('T')[0];
     return banners
@@ -703,22 +1580,46 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const addBanner = (banner: Omit<Banner, 'id'>) => {
+    const actor = getAuditActor();
     const newBanner: Banner = {
       ...banner,
-      id: `ban-${Date.now()}`
+      id: `ban-${Date.now()}`,
+      createdByName: actor.name,
+      createdByEmail: actor.email,
+      updatedByName: actor.name,
+      updatedByEmail: actor.email,
+      updatedAt: actor.nowIso
     };
     const updatedList = [...banners, newBanner];
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
-    void persistToCloudIfAuthorized('banners', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'banners', newBanner);
+    }
     showToast('Banner adicionado e sincronizado!');
   };
 
   const updateBanner = (id: string, banner: Partial<Banner>) => {
-    const updatedList = banners.map((b) => (b.id === id ? { ...b, ...banner } : b));
+    const actor = getAuditActor();
+    let targetBanner: Banner | undefined;
+    const updatedList = banners.map((b) => {
+      if (b.id === id) {
+        targetBanner = {
+          ...b,
+          ...banner,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedAt: actor.nowIso
+        };
+        return targetBanner;
+      }
+      return b;
+    });
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
-    void persistToCloudIfAuthorized('banners', updatedList);
+    if (activeChurch && isManagerAuthenticated && targetBanner) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'banners', targetBanner);
+    }
     showToast('Banner atualizado!');
   };
 
@@ -726,15 +1627,33 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedList = banners.filter((b) => b.id !== id);
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
-    void persistToCloudIfAuthorized('banners', updatedList);
+    if (activeChurch && isManagerAuthenticated) {
+      void CloudChurchService.deleteSubcollectionItem(activeChurch.id, 'banners', id);
+    }
     showToast('Banner removido!');
   };
 
   const toggleBannerActive = (id: string) => {
-    const updatedList = banners.map((b) => (b.id === id ? { ...b, isActive: !b.isActive } : b));
+    const actor = getAuditActor();
+    let targetBanner: Banner | undefined;
+    const updatedList = banners.map((b) => {
+      if (b.id === id) {
+        targetBanner = {
+          ...b,
+          isActive: !b.isActive,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedAt: actor.nowIso
+        };
+        return targetBanner;
+      }
+      return b;
+    });
     setBannersState(updatedList);
     ChurchStorageService.saveBanners(updatedList);
-    void persistToCloudIfAuthorized('banners', updatedList);
+    if (activeChurch && isManagerAuthenticated && targetBanner) {
+      void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'banners', targetBanner);
+    }
   };
 
   // Settings Handlers
@@ -746,38 +1665,26 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettingsState(updated);
     ChurchStorageService.saveSettings(updated);
-    void persistToCloudIfAuthorized('settings', updated);
     showToast('Configurações salvas!');
   };
 
-  // Legacy/Fallback Local Manager Authentication
-  const managerLogin = (email: string, pass: string): boolean => {
-    if (churchRegistry) {
-      showToast('Esta igreja já possui um Gestor Principal no banco de dados. Use o login oficial.', 'error');
-      return false;
-    }
-    const validEmail =
-      email.toLowerCase().trim() === settings.managerEmail.toLowerCase().trim() ||
-      email.toLowerCase().trim() === 'gestor@igreja.com.br';
-    const validPass = pass === 'admin123' || pass === 'igreja123';
-
-    if (validEmail && validPass) {
-      setLocalFallbackAuth(true);
-      showToast('Acesso de demonstração local ativado.');
-      return true;
-    }
-    showToast('Credenciais inválidas.', 'error');
+  const managerLogin = (): boolean => {
+    showToast('Autentique-se com sua conta no Firebase.', 'info');
     return false;
   };
 
   const managerLogout = () => {
-    setLocalFallbackAuth(false);
+    setIsCreatingAdditionalChurch(false);
     void CloudChurchService.logout();
-    setCurrentView('home');
-    showToast('Você saiu da Área do Gestor.', 'info');
+    if (activeChurch) {
+      setCurrentView('home');
+    } else {
+      setCurrentView('directory');
+    }
+    showToast('Você saiu do Portal do Gestor.', 'info');
   };
 
-  // Bible Personal Notes
+  // Bible Personal Notes (local to member's device)
   const addNote = (note: Omit<UserBibleNote, 'id' | 'createdAt' | 'updatedAt'>) => {
     const newNote: UserBibleNote = {
       ...note,
@@ -820,10 +1727,14 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       favorites
     };
     const jsonStr =
-      'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
+      'data:text/json;charset=utf-8,' +
+      encodeURIComponent(JSON.stringify(backupPayload, null, 2));
     const a = document.createElement('a');
     a.setAttribute('href', jsonStr);
-    a.setAttribute('download', `minhas_anotacoes_ipc_${new Date().toISOString().split('T')[0]}.json`);
+    a.setAttribute(
+      'download',
+      `minhas_anotacoes_biblia_${new Date().toISOString().split('T')[0]}.json`
+    );
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -838,7 +1749,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         : Array.isArray(parsed.notes)
         ? parsed.notes
         : [];
-      const importedFavs: UserFavoriteVerse[] = Array.isArray(parsed.favorites) ? parsed.favorites : [];
+      const importedFavs: UserFavoriteVerse[] = Array.isArray(parsed.favorites)
+        ? parsed.favorites
+        : [];
 
       if (importedNotes.length === 0 && importedFavs.length === 0) {
         showToast('Nenhuma anotação válida encontrada no arquivo.', 'error');
@@ -854,7 +1767,10 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (importedFavs.length > 0) {
         const existingFavIds = new Set(favorites.map((f) => f.id));
-        const mergedFavs = [...favorites, ...importedFavs.filter((f) => !existingFavIds.has(f.id))];
+        const mergedFavs = [
+          ...favorites,
+          ...importedFavs.filter((f) => !existingFavIds.has(f.id))
+        ];
         setFavoritesState(mergedFavs);
         ChurchStorageService.saveUserFavorites(mergedFavs);
       }
@@ -869,7 +1785,10 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Bible Favorites
   const toggleFavorite = (verse: Omit<UserFavoriteVerse, 'id' | 'savedAt'>) => {
     const existing = favorites.find(
-      (f) => f.bookAbbrev === verse.bookAbbrev && f.chapter === verse.chapter && f.verse === verse.verse
+      (f) =>
+        f.bookAbbrev === verse.bookAbbrev &&
+        f.chapter === verse.chapter &&
+        f.verse === verse.verse
     );
     if (existing) {
       const updated = favorites.filter((f) => f.id !== existing.id);
@@ -893,7 +1812,10 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const isFavorite = (bookAbbrev: string, chapter: number, verse: number): boolean => {
     return favorites.some(
-      (f) => f.bookAbbrev.toLowerCase() === bookAbbrev.toLowerCase() && f.chapter === chapter && f.verse === verse
+      (f) =>
+        f.bookAbbrev.toLowerCase() === bookAbbrev.toLowerCase() &&
+        f.chapter === chapter &&
+        f.verse === verse
     );
   };
 
@@ -902,6 +1824,31 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       value={{
         currentView,
         setCurrentView,
+        activeChurch,
+        activeChurches,
+        managedChurches,
+        allChurchesForOwner,
+        allPlatformUsers,
+        platformSettings,
+        updatePlatformSettings,
+        selectChurchBySlug,
+        switchChurch,
+        openManagerPortalFromDirectory,
+        needsChurchOnboarding,
+        isCreatingAdditionalChurch,
+        setIsCreatingAdditionalChurch,
+        currentUserTeamRole,
+        isChurchAdmin,
+        createNewChurchInCloud,
+        updateChurchSlugAndMeta,
+        inviteTeamMemberByEmail,
+        updateTeamMemberRoleByEmail,
+        inviteCoManagerByEmail,
+        removeCoManagerEmail,
+        isPlatformOwner,
+        setChurchStatusByOwner,
+        deleteChurchByOwner,
+        wipeAllPlatformDataByOwner,
         churchInfo,
         updateChurchInfo,
         bulletins,
@@ -930,7 +1877,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         settings,
         updateSettings,
         isManagerAuthenticated,
+        isEmailVerified,
         firebaseUser,
+        platformUser,
         currentManagerAccount,
         churchRegistry,
         allManagers,
@@ -939,10 +1888,13 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         loginWithGoogleCloud,
         registerManagerWithEmailCloud,
         loginManagerWithEmailCloud,
+        resendEmailVerification,
+        checkEmailVerificationNow,
         approveOrRevokeManager,
         removePendingManager,
         syncLocalDataToCloud,
         pullLatestFromCloud,
+        resetAllChurchContentToBlank,
         importFullChurchBackup,
         managerLogin,
         managerLogout,

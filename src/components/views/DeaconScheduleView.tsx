@@ -125,7 +125,7 @@ export const DeaconScheduleView: React.FC = () => {
     );
   });
 
-  const nextDuty = sortedSchedules.find((s) => s.date >= todayIso) || sortedSchedules[0];
+  const nextDuty = sortedSchedules.find((s) => s.date >= todayIso);
 
   const formatScheduleDate = (dateStr: string) => {
     try {
@@ -327,15 +327,16 @@ export const DeaconScheduleView: React.FC = () => {
               <Copy className="w-3.5 h-3.5" />
               <span>Copiar</span>
             </button>
-            <button
-              type="button"
-              onClick={() => handleShareWhatsApp(item)}
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent(buildShareText(item))}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="min-h-[36px] px-2.5 py-1 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-semibold flex items-center gap-1 transition-colors"
               title="Enviar escala no WhatsApp"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>Enviar</span>
-            </button>
+            </a>
           </div>
         </div>
       </div>
@@ -377,14 +378,15 @@ export const DeaconScheduleView: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start">
-            <button
-              type="button"
-              onClick={handleShareFullTableWhatsApp}
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent(buildFullMonthShareText())}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors"
             >
               <Share2 className="w-3.5 h-3.5 shrink-0" />
               <span>Enviar Quadro Mensal no WhatsApp</span>
-            </button>
+            </a>
           </div>
         </div>
 
