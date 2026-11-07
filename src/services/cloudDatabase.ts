@@ -84,6 +84,58 @@ export function handleFirestoreError(
 
 export const PLATFORM_OWNER_EMAIL = 'studiojpgloria@gmail.com';
 
+export const DAYS_OF_WEEK = [
+  'Domingo',
+  'Segunda-feira',
+  'Terça-feira',
+  'Quarta-feira',
+  'Quinta-feira',
+  'Sexta-feira',
+  'Sábado',
+  '1ª Semana do Mês',
+  'Diariamente'
+] as const;
+
+/**
+ * Normalizes any time string ("19:30", "19h30", "18h", "9:00") to the standardized format "19h30" / "18h00"
+ */
+export function formatTimeStandard(raw?: string | null): string {
+  if (!raw) return '19h00';
+  const cleaned = raw.trim().toLowerCase();
+  const match = cleaned.match(/^(\d{1,2})\s*[:h]\s*(\d{0,2})/);
+  if (match) {
+    const h = Math.min(23, Math.max(0, parseInt(match[1], 10)))
+      .toString()
+      .padStart(2, '0');
+    const m = match[2]
+      ? Math.min(59, Math.max(0, parseInt(match[2], 10)))
+          .toString()
+          .padStart(2, '0')
+      : '00';
+    return `${h}h${m}`;
+  }
+  const digitsOnly = cleaned.match(/^(\d{1,2})$/);
+  if (digitsOnly) {
+    const h = Math.min(23, Math.max(0, parseInt(digitsOnly[1], 10)))
+      .toString()
+      .padStart(2, '0');
+    return `${h}h00`;
+  }
+  return raw.trim();
+}
+
+/**
+ * Converts a standardized time ("19h30" or "18h") to HTML <input type="time" /> value ("19:30" or "18:00")
+ */
+export function standardTimeToHtmlTime(raw?: string | null): string {
+  const std = formatTimeStandard(raw);
+  const match = std.match(/^(\d{2})h(\d{2})$/);
+  if (match) {
+    return `${match[1]}:${match[2]}`;
+  }
+  return '19:00';
+}
+
 export function isPlatformOwnerEmail(
   email?: string | null,
   emailVerified = false
@@ -225,21 +277,28 @@ export class CloudChurchService {
       (snap) => {
         if (snap.exists()) {
           const data = snap.data() as PlatformSettings;
+          const rawAppName = (data.appName || '').trim();
+          const looksLikeLegacyChurchName =
+            !data.isPlatformBrandConfirmed &&
+            /ipb|presbiteriana|gl[oó]ria|central|batista|assembleia/i.test(rawAppName);
           onUpdate({
-            appName: data.appName || 'Minha Igreja',
-            tagline: data.tagline || 'Conectando você à sua comunidade de fé'
+            appName: !rawAppName || looksLikeLegacyChurchName ? 'Minha Igreja' : rawAppName,
+            tagline: data.tagline || 'Conectando você à sua comunidade de fé',
+            isPlatformBrandConfirmed: Boolean(data.isPlatformBrandConfirmed)
           });
         } else {
           onUpdate({
             appName: 'Minha Igreja',
-            tagline: 'Conectando você à sua comunidade de fé'
+            tagline: 'Conectando você à sua comunidade de fé',
+            isPlatformBrandConfirmed: true
           });
         }
       },
       () => {
         onUpdate({
           appName: 'Minha Igreja',
-          tagline: 'Conectando você à sua comunidade de fé'
+          tagline: 'Conectando você à sua comunidade de fé',
+          isPlatformBrandConfirmed: true
         });
       }
     );
@@ -253,6 +312,7 @@ export class CloudChurchService {
         {
           appName: settings.appName.trim() || 'Minha Igreja',
           tagline: settings.tagline.trim() || 'Conectando você à sua comunidade de fé',
+          isPlatformBrandConfirmed: true,
           updatedAt: serverTimestamp()
         },
         { merge: true }
@@ -518,8 +578,13 @@ export class CloudChurchService {
     const state = extra?.state !== undefined ? extra.state : parsedLoc.state;
 
     try {
+      const normalizedSchedules = (info.schedules || []).map((s) => ({
+        ...s,
+        time: formatTimeStandard(s.time)
+      }));
       const payload: Record<string, unknown> = {
         ...info,
+        schedules: normalizedSchedules,
         city,
         state,
         updatedAt: serverTimestamp()
@@ -532,7 +597,7 @@ export class CloudChurchService {
       await setDoc(ref, payload, { merge: true });
 
       // Sync cultos & lideranca subcollections (requires Admin level)
-      await this.replaceSubcollectionItems(churchId, 'cultos', info.schedules || []);
+      await this.replaceSubcollectionItems(churchId, 'cultos', normalizedSchedules);
       await this.replaceSubcollectionItems(churchId, 'lideranca', info.leadership || []);
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, `churches/${churchId}`);

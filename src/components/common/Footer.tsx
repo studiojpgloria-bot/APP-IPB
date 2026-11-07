@@ -1,6 +1,7 @@
 import React from 'react';
 import { Church, Instagram, Lock, Mail, MapPin, Phone, ShieldCheck, Youtube } from 'lucide-react';
 import { useChurch } from '../../context/ChurchContext';
+import { formatTimeStandard } from '../../services/cloudDatabase';
 
 export const Footer: React.FC = () => {
   const {
@@ -14,6 +15,12 @@ export const Footer: React.FC = () => {
     isMobileAppPreview
   } = useChurch();
 
+  const rawPlatformName = (platformSettings.appName || 'Minha Igreja').trim();
+  const isSameAsActiveChurch =
+    Boolean(activeChurch?.name) &&
+    rawPlatformName.toLowerCase() === activeChurch!.name.trim().toLowerCase();
+  const platformBrand = !rawPlatformName || isSameAsActiveChurch ? 'Minha Igreja' : rawPlatformName;
+
   const isPlatformFooterMode =
     currentView === 'manager' || currentView === 'admin' || !activeChurch;
 
@@ -22,7 +29,7 @@ export const Footer: React.FC = () => {
       <footer className="bg-white border-t border-stone-200 py-6 px-4 sm:px-6 text-xs text-stone-500">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <span>
-            © {new Date().getFullYear()} {platformSettings.appName || 'Minha Igreja'}. Plataforma digital multi-igreja.
+            © {new Date().getFullYear()} {platformBrand}. Plataforma digital multi-igreja.
           </span>
           <button
             type="button"
@@ -37,7 +44,7 @@ export const Footer: React.FC = () => {
     );
   }
 
-  const displayChurchName = activeChurch.name || churchInfo.name || platformSettings.appName || 'Minha Igreja';
+  const displayChurchName = activeChurch.name || churchInfo.name || platformBrand;
   const displayChurchLogo = activeChurch.logoUrl || churchInfo.logoUrl;
 
   return (
@@ -73,9 +80,9 @@ export const Footer: React.FC = () => {
                 <h3 className="text-white font-semibold text-base sm:text-lg tracking-tight truncate">
                   {displayChurchName}
                 </h3>
-                {churchInfo.tagline && (
-                  <p className="text-stone-400 text-xs truncate">{churchInfo.tagline}</p>
-                )}
+                <p className="text-stone-400 text-xs truncate">
+                  {churchInfo.tagline || 'Seja bem-vindo! Junte-se a nós para adorar a Deus.'}
+                </p>
               </div>
             </div>
             {churchInfo.aboutHistory ? (
@@ -129,32 +136,30 @@ export const Footer: React.FC = () => {
           </div>
 
           {/* Col 2: Cultos e Horários */}
-          <div className="space-y-3">
-            <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
-              Cultos &amp; Encontros
-            </h4>
-            {churchInfo.schedules.length > 0 ? (
+          {churchInfo.schedules.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
+                Cultos &amp; Encontros
+              </h4>
               <ul className="space-y-2 text-xs text-stone-400">
                 {churchInfo.schedules.slice(0, 4).map((sch) => (
                   <li key={sch.id} className="flex flex-col">
                     <span className="font-semibold text-stone-200">
-                      {sch.day} · {sch.time}
+                      {sch.day} · {formatTimeStandard(sch.time)}
                     </span>
                     <span className="text-stone-400 text-[11px]">{sch.title}</span>
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="text-xs text-stone-500 italic">Nenhum horário cadastrado ainda.</p>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Col 3: Contato & Endereço */}
-          <div className="space-y-3">
-            <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
-              Endereço &amp; Contato
-            </h4>
-            {churchInfo.address || churchInfo.primaryPhone || churchInfo.email ? (
+          {(churchInfo.address || churchInfo.cityStateZip || churchInfo.primaryPhone || churchInfo.email) && (
+            <div className="space-y-3">
+              <h4 className="text-white font-semibold tracking-wide uppercase text-[11px] text-stone-400">
+                Endereço &amp; Contato
+              </h4>
               <div className="space-y-2 text-xs text-stone-400">
                 {(churchInfo.address || churchInfo.cityStateZip) && (
                   <p className="flex items-start gap-2">
@@ -183,10 +188,8 @@ export const Footer: React.FC = () => {
                   </p>
                 )}
               </div>
-            ) : (
-              <p className="text-xs text-stone-500 italic">Endereço e contato não configurados.</p>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Bottom bar & Discreet Manager Link */}
@@ -199,7 +202,7 @@ export const Footer: React.FC = () => {
         >
           <div className="flex items-center gap-1.5">
             <span>
-              © {new Date().getFullYear()} {displayChurchName} — {platformSettings.appName || 'Minha Igreja'}
+              © {new Date().getFullYear()} {displayChurchName} — {platformBrand}
             </span>
           </div>
 
@@ -229,7 +232,7 @@ export const Footer: React.FC = () => {
               ) : (
                 <>
                   <Lock className="w-3.5 h-3.5" />
-                  <span>Área do Gestor</span>
+                  <span>Área do gestor</span>
                 </>
               )}
             </button>

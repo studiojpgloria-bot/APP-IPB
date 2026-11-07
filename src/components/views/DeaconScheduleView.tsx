@@ -7,23 +7,68 @@ import {
   Clock,
   Copy,
   DoorOpen,
-  Flame,
   HandHeart,
   Info,
   MessageCircle,
-  Moon,
   Search,
   Share2,
   ShieldCheck,
   Sparkles,
-  Sun,
   UserCheck
 } from 'lucide-react';
 import { useChurch } from '../../context/ChurchContext';
-import { DeaconScheduleCategory, DeaconScheduleItem } from '../../types';
+import { formatTimeStandard } from '../../services/cloudDatabase';
+import { DeaconScheduleCategory, DeaconScheduleItem, ScheduleItem } from '../../types';
+
+export interface DeaconCategoryDefinition {
+  id: string;
+  label: string;
+  shortLabel: string;
+  subtitle: string;
+  defaultTime: string;
+  defaultServiceName: string;
+  badgeBg: string;
+  badgeText: string;
+  borderAccent: string;
+}
+
+const ACCENT_PALETTE = [
+  {
+    badgeBg: 'bg-emerald-100',
+    badgeText: 'text-emerald-900',
+    borderAccent: 'border-l-[#344E41]'
+  },
+  {
+    badgeBg: 'bg-sky-100',
+    badgeText: 'text-sky-900',
+    borderAccent: 'border-l-sky-600'
+  },
+  {
+    badgeBg: 'bg-amber-100',
+    badgeText: 'text-amber-900',
+    borderAccent: 'border-l-amber-500'
+  },
+  {
+    badgeBg: 'bg-indigo-100',
+    badgeText: 'text-indigo-900',
+    borderAccent: 'border-l-indigo-600'
+  }
+];
+
+export const SPECIAL_EVENT_CATEGORY: DeaconCategoryDefinition = {
+  id: 'evento_especial',
+  label: 'Evento especial',
+  shortLabel: 'Evento especial',
+  subtitle: 'Programações extras, conferências, casamentos, vigílias ou celebrações especiais',
+  defaultTime: '19h30',
+  defaultServiceName: 'Evento Especial',
+  badgeBg: 'bg-purple-100',
+  badgeText: 'text-purple-900',
+  borderAccent: 'border-l-purple-600'
+};
 
 export const CATEGORY_META: Record<
-  DeaconScheduleCategory,
+  string,
   {
     label: string;
     shortLabel: string;
@@ -33,65 +78,97 @@ export const CATEGORY_META: Record<
     borderAccent: string;
   }
 > = {
-  semana_oracao: {
-    label: '1ª Semana do Mês — Semana de Oração',
-    shortLabel: 'Semana de Oração',
-    subtitle: 'Reuniões de clamor e intercessão na primeira semana do mês',
-    badgeBg: 'bg-amber-100',
-    badgeText: 'text-amber-900',
-    borderAccent: 'border-l-amber-500'
-  },
-  quinta_estudo: {
-    label: 'Quintas-feiras — Culto de Estudo e Oração',
-    shortLabel: 'Quinta (Estudo e Oração)',
-    subtitle: 'Plantão semanal nas quintas-feiras para o Culto de Estudo Bíblico e Oração',
+  evento_especial: SPECIAL_EVENT_CATEGORY
+};
+
+/**
+ * Generates Deacon Schedule categories dynamically from the church's registered Cultos (schedules)
+ * plus "Evento especial".
+ */
+export function buildDeaconCategories(schedules: ScheduleItem[] = []): DeaconCategoryDefinition[] {
+  const dynamicCats: DeaconCategoryDefinition[] = schedules.map((sch, idx) => {
+    const palette = ACCENT_PALETTE[idx % ACCENT_PALETTE.length];
+    const formattedTime = formatTimeStandard(sch.time || '19h30');
+    const shortLabel = `${sch.day} (${formattedTime}) — ${sch.title}`;
+    return {
+      id: sch.id || `culto_${idx}`,
+      label: `${sch.day} às ${formattedTime} — ${sch.title}`,
+      shortLabel,
+      subtitle: sch.description || `Plantão diaconal para ${sch.title} (${sch.day} às ${formattedTime})`,
+      defaultTime: formattedTime,
+      defaultServiceName: sch.title,
+      badgeBg: palette.badgeBg,
+      badgeText: palette.badgeText,
+      borderAccent: palette.borderAccent
+    };
+  });
+
+  return [...dynamicCats, SPECIAL_EVENT_CATEGORY];
+}
+
+/**
+ * Resolves metadata for a schedule item's category, matching dynamic church schedules first,
+ * or falling back to the item's own serviceName / Evento especial.
+ */
+export function getDeaconCategoryMeta(
+  item: Pick<DeaconScheduleItem, 'category' | 'serviceName' | 'time'>,
+  schedules: ScheduleItem[] = []
+): DeaconCategoryDefinition {
+  const categories = buildDeaconCategories(schedules);
+  const directMatch = categories.find((c) => c.id === item.category);
+  if (directMatch) return directMatch;
+
+  // Try matching by serviceName or title
+  const byName = categories.find(
+    (c) =>
+      c.id !== 'evento_especial' &&
+      c.defaultServiceName.trim().toLowerCase() === (item.serviceName || '').trim().toLowerCase()
+  );
+  if (byName) return byName;
+
+  if (item.category === 'evento_especial') {
+    return SPECIAL_EVENT_CATEGORY;
+  }
+
+  return {
+    id: item.category || 'culto_geral',
+    label: item.serviceName || 'Culto Regular',
+    shortLabel: item.serviceName || 'Culto',
+    subtitle: `Plantão diaconal — ${formatTimeStandard(item.time || '')}`,
+    defaultTime: formatTimeStandard(item.time || '19h30'),
+    defaultServiceName: item.serviceName || 'Culto',
     badgeBg: 'bg-emerald-100',
     badgeText: 'text-emerald-900',
     borderAccent: 'border-l-[#344E41]'
-  },
-  domingo_manha: {
-    label: 'Domingo pela Manhã — Culto Matutino',
-    shortLabel: 'Domingo (Manhã)',
-    subtitle: 'Plantão dominical matutino e apoio à Escola Bíblica',
-    badgeBg: 'bg-sky-100',
-    badgeText: 'text-sky-900',
-    borderAccent: 'border-l-sky-600'
-  },
-  domingo_noite: {
-    label: 'Domingo à Noite — Culto Noturno',
-    shortLabel: 'Domingo (Noite)',
-    subtitle: 'Plantão dominical vespertino/noturno de adoração comunitária',
-    badgeBg: 'bg-indigo-100',
-    badgeText: 'text-indigo-900',
-    borderAccent: 'border-l-indigo-600'
-  },
-  evento_especial: {
-    label: 'Espaço Reservado para Eventos Especiais',
-    shortLabel: 'Evento Especial',
-    subtitle: 'Programações extras, conferências, casamentos, vigílias ou celebrações especiais',
-    badgeBg: 'bg-purple-100',
-    badgeText: 'text-purple-900',
-    borderAccent: 'border-l-purple-600'
-  }
-};
+  };
+}
 
 export const DeaconScheduleView: React.FC = () => {
-  const { deaconSchedules, isMobileAppPreview, showToast, isManagerAuthenticated, setCurrentView } = useChurch();
+  const {
+    churchInfo,
+    activeChurch,
+    deaconSchedules,
+    isMobileAppPreview,
+    showToast,
+    isManagerAuthenticated,
+    setCurrentView
+  } = useChurch();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | DeaconScheduleCategory>('ALL');
 
+  const churchDisplayName = churchInfo.name || activeChurch?.name || 'Igreja';
+  const deaconBadgeLabel = `Junta Diaconal — ${churchDisplayName}`;
+
+  const dynamicCategories = buildDeaconCategories(churchInfo.schedules);
   const todayIso = new Date().toISOString().split('T')[0];
 
-  // Ensure every item has a valid category (fallback if older item)
-  const normalizedSchedules: DeaconScheduleItem[] = deaconSchedules.map((item) => {
-    if (item.category && CATEGORY_META[item.category]) return item;
-    const lower = item.serviceName.toLowerCase();
-    let cat: DeaconScheduleCategory = 'domingo_noite';
-    if (lower.includes('semana de oração') || lower.includes('1ª semana')) cat = 'semana_oracao';
-    else if (lower.includes('quinta') || lower.includes('estudo')) cat = 'quinta_estudo';
-    else if (lower.includes('manhã') || lower.includes('matutino') || item.time.startsWith('08') || item.time.startsWith('09')) cat = 'domingo_manha';
-    else if (lower.includes('evento') || lower.includes('especial')) cat = 'evento_especial';
-    return { ...item, category: cat };
+  // Filter out drafts on public page
+  const publishedSchedules = deaconSchedules.filter((item) => item.status !== 'draft');
+
+  // Normalize category to match current church schedules if possible
+  const normalizedSchedules: DeaconScheduleItem[] = publishedSchedules.map((item) => {
+    const resolved = getDeaconCategoryMeta(item, churchInfo.schedules);
+    return { ...item, category: resolved.id };
   });
 
   // Sort chronologically
@@ -142,12 +219,12 @@ export const DeaconScheduleView: React.FC = () => {
 
   const buildShareText = (item: DeaconScheduleItem) => {
     const formattedDate = formatScheduleDate(item.date);
-    const catMeta = CATEGORY_META[item.category] || CATEGORY_META.domingo_noite;
+    const catMeta = getDeaconCategoryMeta(item, churchInfo.schedules);
     return [
-      `📋 *ESCALA DA JUNTA DIACONAL - IPC*`,
-      `🏷️ *Modalidade:* ${catMeta.shortLabel}`,
-      `📅 *Data:* ${formattedDate} às ${item.time}`,
-      `⛪ *Culto/Programação:* ${item.serviceName}`,
+      `📋 *ESCALA — ${deaconBadgeLabel.toUpperCase()}*`,
+      `🏷️ *Culto / Categoria:* ${catMeta.shortLabel}`,
+      `📅 *Data:* ${formattedDate} às ${formatTimeStandard(item.time)}`,
+      `⛪ *Programação:* ${item.serviceName}`,
       `👤 *Coordenador(a) do Dia:* ${item.coordinator}`,
       ``,
       `🚪 *Recepção e Porta:* ${item.receptionTeam.join(', ') || 'A definir'}`,
@@ -161,36 +238,24 @@ export const DeaconScheduleView: React.FC = () => {
 
   const buildFullMonthShareText = () => {
     const lines: string[] = [
-      `📋 *QUADRO GERAL DE ESCALA DE DIÁCONOS - IPC*`,
+      `📋 *QUADRO DE ESCALA DIACONAL — ${churchDisplayName.toUpperCase()}*`,
       `====================================`,
       ``
     ];
 
-    const groups: { key: DeaconScheduleCategory; title: string }[] = [
-      { key: 'semana_oracao', title: '🔥 *1ª SEMANA DO MÊS — SEMANA DE ORAÇÃO*' },
-      { key: 'quinta_estudo', title: '📖 *QUINTAS-FEIRAS — CULTO DE ESTUDO E ORAÇÃO*' },
-      { key: 'domingo_manha', title: '☀️ *DOMINGOS PELA MANHÃ — CULTO MATUTINO*' },
-      { key: 'domingo_noite', title: '🌙 *DOMINGOS À NOITE — CULTO NOTURNO*' },
-      { key: 'evento_especial', title: '⭐ *ESPAÇO RESERVADO PARA EVENTOS ESPECIAIS*' }
-    ];
+    if (sortedSchedules.length === 0) {
+      lines.push(`_Nenhuma escala diaconal publicada no momento._`);
+      return lines.join('\n');
+    }
 
-    for (const g of groups) {
-      lines.push(g.title);
-      const items = sortedSchedules.filter((s) => s.category === g.key);
-      if (items.length === 0) {
-        lines.push(`_Espaço reservado (sem escala cadastrada no momento)_`);
-      } else {
-        for (const it of items) {
-          const dStr = new Date(it.date + 'T12:00:00').toLocaleDateString('pt-BR', {
-            day: '2-digit',
-            month: '2-digit'
-          });
-          lines.push(
-            `• *${dStr} (${it.time}) - ${it.serviceName}*\n  Coord.: ${it.coordinator} | Porta: ${it.receptionTeam.join(', ')} | Ofertas/Ceia: ${it.offeringAndCommunionTeam.join(', ')} | Pátio: ${it.parkingAndOrderTeam.join(', ')}`
-          );
-        }
-      }
-      lines.push(``);
+    for (const it of sortedSchedules) {
+      const dStr = new Date(it.date + 'T12:00:00').toLocaleDateString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit'
+      });
+      lines.push(
+        `• *${dStr} (${formatTimeStandard(it.time)}) - ${it.serviceName}*\n  Coord.: ${it.coordinator} | Porta: ${it.receptionTeam.join(', ') || 'A definir'} | Ofertas/Ceia: ${it.offeringAndCommunionTeam.join(', ') || 'A definir'} | Pátio: ${it.parkingAndOrderTeam.join(', ') || 'A definir'}`
+      );
     }
 
     return lines.join('\n');
@@ -206,14 +271,9 @@ export const DeaconScheduleView: React.FC = () => {
     window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer');
   };
 
-  const handleShareFullTableWhatsApp = () => {
-    const text = encodeURIComponent(buildFullMonthShareText());
-    window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer');
-  };
-
   const renderScheduleCard = (item: DeaconScheduleItem) => {
     const isToday = item.date === todayIso;
-    const catMeta = CATEGORY_META[item.category] || CATEGORY_META.domingo_noite;
+    const catMeta = getDeaconCategoryMeta(item, churchInfo.schedules);
 
     return (
       <div
@@ -240,7 +300,7 @@ export const DeaconScheduleView: React.FC = () => {
             </div>
             <span className="text-xs font-mono font-bold bg-[#EAF0EC] text-[#344E41] px-2.5 py-0.5 rounded-lg flex items-center gap-1 shrink-0">
               <Clock className="w-3 h-3" />
-              {item.time}
+              {formatTimeStandard(item.time)}
             </span>
           </div>
 
@@ -314,7 +374,7 @@ export const DeaconScheduleView: React.FC = () => {
               <span>Falar com Coordenador</span>
             </a>
           ) : (
-            <span className="text-[11px] text-stone-400">Junta Diaconal IPC</span>
+            <span className="text-[11px] text-stone-400">{deaconBadgeLabel}</span>
           )}
 
           <div className="flex items-center gap-1.5">
@@ -343,17 +403,9 @@ export const DeaconScheduleView: React.FC = () => {
     );
   };
 
-  // Group items into the 4 church sections
-  const prayerWeekSchedules = filteredSchedules.filter((s) => s.category === 'semana_oracao');
-  const thursdaySchedules = filteredSchedules.filter((s) => s.category === 'quinta_estudo');
-  const sundaySchedules = filteredSchedules.filter(
-    (s) => s.category === 'domingo_manha' || s.category === 'domingo_noite'
-  );
-  const specialEventSchedules = filteredSchedules.filter((s) => s.category === 'evento_especial');
-
   return (
     <div className="space-y-6 pb-8">
-      {/* 1. Header & Padrão da Escala */}
+      {/* 1. Header & Filtros Dinâmicos a partir dos Cultos */}
       <div className="bg-white rounded-3xl p-5 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
         <div
           className={`flex gap-4 ${
@@ -364,97 +416,64 @@ export const DeaconScheduleView: React.FC = () => {
         >
           <div className="space-y-1.5">
             <span className="text-xs font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-3 py-1 rounded-full inline-block">
-              Junta Diaconal IPC
+              {deaconBadgeLabel}
             </span>
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-stone-900 tracking-tight flex items-center gap-2">
               <ClipboardList className="w-6 h-6 sm:w-7 sm:h-7 text-[#344E41] shrink-0" />
               <span>Escala de Diáconos</span>
             </h1>
             <p className="text-stone-600 text-xs sm:text-sm leading-relaxed">
-              Organizada conforme o calendário oficial da igreja: <strong>1ª Semana de Oração</strong>,{' '}
-              <strong>Quintas de Estudo e Oração</strong>, <strong>Domingos (Manhã e Noite)</strong> e{' '}
-              <strong>Espaço Reservado para Eventos</strong>.
+              Confira as equipes escaladas para recepção, ofertas, Santa Ceia e ordem nos cultos e programações de{' '}
+              <strong>{churchDisplayName}</strong>.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 self-start">
-            <a
-              href={`https://wa.me/?text=${encodeURIComponent(buildFullMonthShareText())}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors"
-            >
-              <Share2 className="w-3.5 h-3.5 shrink-0" />
-              <span>Enviar Quadro Mensal no WhatsApp</span>
-            </a>
-          </div>
-        </div>
-
-        {/* Resumo Visual do Funcionamento da Escala */}
-        <div
-          className={`grid gap-2.5 ${
-            isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-          }`}
-        >
-          <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 flex items-start gap-2.5">
-            <Flame className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-            <div className="text-xs">
-              <span className="font-bold text-amber-950 block">1ª Semana do Mês</span>
-              <span className="text-amber-800 text-[11px]">Semana de Oração</span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-2xl bg-[#EAF0EC]/70 border border-emerald-200/80 flex items-start gap-2.5">
-            <Clock className="w-4 h-4 text-[#344E41] shrink-0 mt-0.5" />
-            <div className="text-xs">
-              <span className="font-bold text-[#284136] block">Quintas-feiras</span>
-              <span className="text-stone-600 text-[11px]">Culto de Estudo e Oração</span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-2xl bg-sky-50/80 border border-sky-200/80 flex items-start gap-2.5">
-            <Sun className="w-4 h-4 text-sky-700 shrink-0 mt-0.5" />
-            <div className="text-xs">
-              <span className="font-bold text-sky-950 block">Domingos</span>
-              <span className="text-sky-800 text-[11px]">Culto pela Manhã e Culto à Noite</span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-2xl bg-purple-50/80 border border-purple-200/80 flex items-start gap-2.5">
-            <CalendarPlus className="w-4 h-4 text-purple-700 shrink-0 mt-0.5" />
-            <div className="text-xs">
-              <span className="font-bold text-purple-950 block">Espaço Reservado</span>
-              <span className="text-purple-800 text-[11px]">Eventos Especiais (caso haja)</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Category Filter Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          {[
-            { id: 'ALL', label: 'Quadro Completo' },
-            { id: 'semana_oracao', label: '1ª Semana (Oração)' },
-            { id: 'quinta_estudo', label: 'Quintas (Estudo e Oração)' },
-            { id: 'domingo_manha', label: 'Domingos (Manhã)' },
-            { id: 'domingo_noite', label: 'Domingos (Noite)' },
-            { id: 'evento_especial', label: 'Eventos Especiais' }
-          ].map((tab) => {
-            const active = selectedCategory === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setSelectedCategory(tab.id as 'ALL' | DeaconScheduleCategory)}
-                className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-semibold shrink-0 whitespace-nowrap transition-all ${
-                  active
-                    ? 'bg-[#344E41] text-white shadow-2xs'
-                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                }`}
+          {sortedSchedules.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 self-start">
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(buildFullMonthShareText())}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-semibold flex items-center gap-2 shadow-xs transition-colors"
               >
-                {tab.label}
-              </button>
-            );
-          })}
+                <Share2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Enviar Quadro no WhatsApp</span>
+              </a>
+            </div>
+          )}
         </div>
+
+        {/* Atalhos rápidos gerados dinamicamente dos horários de cultos da igreja (+ Evento especial) */}
+        {dynamicCategories.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              onClick={() => setSelectedCategory('ALL')}
+              className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-semibold shrink-0 whitespace-nowrap transition-all ${
+                selectedCategory === 'ALL'
+                  ? 'bg-[#344E41] text-white shadow-2xs'
+                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+              }`}
+            >
+              Todas as Escalas
+            </button>
+            {dynamicCategories.map((cat) => {
+              const active = selectedCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-semibold shrink-0 whitespace-nowrap transition-all ${
+                    active
+                      ? 'bg-[#344E41] text-white shadow-2xs'
+                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                  }`}
+                >
+                  {cat.shortLabel}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Search by Deacon Name or Culto */}
         <div className="relative">
@@ -478,7 +497,7 @@ export const DeaconScheduleView: React.FC = () => {
               <span>Próximo Plantão em Destaque</span>
             </span>
             <span className="text-xs font-mono bg-black/25 px-3 py-1 rounded-full text-emerald-100">
-              {formatScheduleDate(nextDuty.date)} · {nextDuty.time}
+              {formatScheduleDate(nextDuty.date)} · {formatTimeStandard(nextDuty.time)}
             </span>
           </div>
 
@@ -559,140 +578,30 @@ export const DeaconScheduleView: React.FC = () => {
         </section>
       )}
 
-      {/* 3. BLOCO 1: 1ª SEMANA DO MÊS — SEMANA DE ORAÇÃO */}
-      {(selectedCategory === 'ALL' || selectedCategory === 'semana_oracao') && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-              <Flame className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="font-bold text-stone-900 text-base">
-                1ª Semana do Mês — Semana de Oração
-              </h2>
-              <p className="text-xs text-stone-500">
-                Equipes escaladas para os cultos especiais de oração na primeira semana do mês
-              </p>
-            </div>
-          </div>
-
-          {prayerWeekSchedules.length === 0 ? (
-            <div className="bg-white p-6 rounded-2xl border border-stone-200 text-xs text-stone-500">
-              Nenhuma escala da Semana de Oração encontrada para o filtro atual.
-            </div>
-          ) : (
-            <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
-              {prayerWeekSchedules.map(renderScheduleCard)}
-            </div>
+      {/* 3. Lista de Escalas Publicadas */}
+      {filteredSchedules.length === 0 ? (
+        <div className="bg-white p-10 rounded-2xl border border-stone-200 text-center space-y-3">
+          <ClipboardList className="w-8 h-8 text-stone-300 mx-auto" />
+          <p className="text-sm font-medium text-stone-600">
+            {publishedSchedules.length === 0
+              ? 'Nenhuma escala diaconal publicada no momento.'
+              : 'Nenhuma escala encontrada para o filtro selecionado.'}
+          </p>
+          {isManagerAuthenticated && (
+            <button
+              type="button"
+              onClick={() => setCurrentView('manager')}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#344E41] bg-[#EAF0EC] hover:bg-[#dce6e0] px-4 py-2 rounded-xl transition-colors"
+            >
+              <CalendarPlus className="w-4 h-4" />
+              <span>Gerenciar Escalas no Painel do Gestor</span>
+            </button>
           )}
-        </section>
-      )}
-
-      {/* 4. BLOCO 2: QUINTAS-FEIRAS — CULTO DE ESTUDO E ORAÇÃO */}
-      {(selectedCategory === 'ALL' || selectedCategory === 'quinta_estudo') && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center shrink-0">
-              <Clock className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="font-bold text-stone-900 text-base">
-                Quintas-feiras — Culto de Estudo e Oração
-              </h2>
-              <p className="text-xs text-stone-500">
-                Plantões das quintas-feiras para o Culto de Estudo Bíblico e Oração
-              </p>
-            </div>
-          </div>
-
-          {thursdaySchedules.length === 0 ? (
-            <div className="bg-white p-6 rounded-2xl border border-stone-200 text-xs text-stone-500">
-              Nenhuma escala de quinta-feira encontrada para o filtro atual.
-            </div>
-          ) : (
-            <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
-              {thursdaySchedules.map(renderScheduleCard)}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* 5. BLOCO 3: DOMINGOS — PELA MANHÃ E À NOITE */}
-      {(selectedCategory === 'ALL' ||
-        selectedCategory === 'domingo_manha' ||
-        selectedCategory === 'domingo_noite') && (
-        <section className="space-y-3">
-          <div className="flex items-center gap-2.5 px-1">
-            <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-800 flex items-center justify-center shrink-0">
-              <Sun className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="font-bold text-stone-900 text-base">
-                Domingos — Culto pela Manhã & Culto à Noite
-              </h2>
-              <p className="text-xs text-stone-500">
-                Equipes escaladas para os cultos dominicais matutinos (Manhã) e vespertinos (Noite)
-              </p>
-            </div>
-          </div>
-
-          {sundaySchedules.length === 0 ? (
-            <div className="bg-white p-6 rounded-2xl border border-stone-200 text-xs text-stone-500">
-              Nenhuma escala de domingo encontrada para o filtro atual.
-            </div>
-          ) : (
-            <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
-              {sundaySchedules.map(renderScheduleCard)}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* 6. BLOCO 4: ESPAÇO RESERVADO PARA EVENTOS ESPECIAIS */}
-      {(selectedCategory === 'ALL' || selectedCategory === 'evento_especial') && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-2 px-1 flex-wrap">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
-                <CalendarPlus className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="font-bold text-stone-900 text-base">
-                  Espaço Reservado para Eventos Especiais
-                </h2>
-                <p className="text-xs text-stone-500">
-                  Escalas extras para eventos, conferências, casamentos ou programações especiais caso haja
-                </p>
-              </div>
-            </div>
-
-            {isManagerAuthenticated && (
-              <button
-                type="button"
-                onClick={() => setCurrentView('manager')}
-                className="text-xs font-semibold text-purple-800 bg-purple-50 hover:bg-purple-100 px-3 py-1.5 rounded-xl border border-purple-200 transition-colors"
-              >
-                + Adicionar Evento no Gestor
-              </button>
-            )}
-          </div>
-
-          {specialEventSchedules.length === 0 ? (
-            <div className="bg-purple-50/40 p-6 rounded-2xl border-2 border-dashed border-purple-200 text-center space-y-2">
-              <CalendarPlus className="w-7 h-7 text-purple-400 mx-auto" />
-              <h3 className="text-sm font-bold text-purple-950">
-                Espaço Reservado para Eventos Extraordinários
-              </h3>
-              <p className="text-xs text-purple-800/80 max-w-md mx-auto">
-                Este espaço é reservado para escalas de eventos especiais do mês (conferências, casamentos, vigílias ou cultos extraordinários). Quando houver evento agendado, a equipe escalada aparecerá aqui.
-              </p>
-            </div>
-          ) : (
-            <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
-              {specialEventSchedules.map(renderScheduleCard)}
-            </div>
-          )}
-        </section>
+        </div>
+      ) : (
+        <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+          {filteredSchedules.map(renderScheduleCard)}
+        </div>
       )}
     </div>
   );

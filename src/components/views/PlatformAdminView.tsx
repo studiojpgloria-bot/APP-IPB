@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -50,6 +50,11 @@ export const PlatformAdminView: React.FC = () => {
   const [taglineInput, setTaglineInput] = useState(
     platformSettings.tagline || 'Conectando você à sua comunidade de fé'
   );
+
+  useEffect(() => {
+    setAppNameInput(platformSettings.appName || 'Minha Igreja');
+    setTaglineInput(platformSettings.tagline || 'Conectando você à sua comunidade de fé');
+  }, [platformSettings.appName, platformSettings.tagline]);
 
   // Wipe All Platform Data Modal State (Requirement 4: confirm by typing APAGAR)
   const [wipeModalOpen, setWipeModalOpen] = useState(false);

@@ -16,7 +16,7 @@ const MONTH_NAMES = [
 ];
 
 export const BirthdaysView: React.FC = () => {
-  const { birthdays, isMobileAppPreview } = useChurch();
+  const { birthdays, isMobileAppPreview, isManagerAuthenticated } = useChurch();
 
   const today = new Date();
   const currentRealMonth = today.getMonth() + 1;
@@ -158,7 +158,7 @@ export const BirthdaysView: React.FC = () => {
                   <h3 className="font-bold text-stone-900 text-sm sm:text-base truncate mt-0.5">
                     {person.name}
                   </h3>
-                  <p className="text-xs text-stone-500 truncate">{person.ministry || 'Membro IPC'}</p>
+                  <p className="text-xs text-stone-500 truncate">{person.ministry || 'Membro da Igreja'}</p>
 
                   {person.phone && (
                     <a
@@ -193,9 +193,11 @@ export const BirthdaysView: React.FC = () => {
           <div className="bg-white p-12 text-center rounded-2xl border border-stone-200 text-stone-500 space-y-2">
             <Gift className="w-8 h-8 text-stone-300 mx-auto" />
             <p className="text-sm font-medium">Nenhum aniversariante cadastrado para este mês.</p>
-            <p className="text-xs text-stone-400">
-              O gestor da igreja pode cadastrar membros ou importar via planilha CSV.
-            </p>
+            {isManagerAuthenticated && (
+              <p className="text-xs text-stone-400">
+                O gestor da igreja pode cadastrar membros ou importar via planilha CSV.
+              </p>
+            )}
           </div>
         ) : (
           <div

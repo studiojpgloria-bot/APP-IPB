@@ -438,7 +438,11 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const isPlatformScreen =
       currentView === 'directory' || currentView === 'admin' || currentView === 'manager' || !activeChurch;
     const color = isPlatformScreen ? '#344E41' : activeChurch?.themeColor || '#344E41';
-    const platformBrand = platformSettings.appName || 'Minha Igreja';
+    const rawPlatformName = (platformSettings.appName || 'Minha Igreja').trim();
+    const isSameAsChurch =
+      Boolean(activeChurch?.name) &&
+      rawPlatformName.toLowerCase() === activeChurch!.name.trim().toLowerCase();
+    const platformBrand = !rawPlatformName || isSameAsChurch ? 'Minha Igreja' : rawPlatformName;
 
     if (typeof document !== 'undefined') {
       document.documentElement.style.setProperty('--church-theme', color);
@@ -449,13 +453,14 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         document.title = `Administração — ${platformBrand}`;
       } else if (currentView === 'manager') {
         document.title = `Portal do Gestor — ${platformBrand}`;
-      } else if (activeChurch?.name) {
-        document.title = `${activeChurch.name} — ${platformBrand}`;
+      } else if (activeChurch?.name || churchInfo.name) {
+        const chName = (activeChurch?.name || churchInfo.name).trim();
+        document.title = `${chName} — ${platformBrand}`;
       } else {
         document.title = platformBrand;
       }
     }
-  }, [activeChurch, currentView, platformSettings.appName]);
+  }, [activeChurch, churchInfo.name, currentView, platformSettings.appName]);
 
   // 1. Subscribe to Platform Settings & Active Churches Directory (no demo fallback!)
   useEffect(() => {
@@ -1332,17 +1337,22 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     showToast('Informações da igreja salvas e sincronizadas!');
   };
 
-  // Requirement 10: "Último boletim" uses current date and ignores past items
+  // Requirement 10 & Draft/Published filter: "Último boletim" uses current date, ignores past items, and ignores drafts
   const todayIso = new Date().toISOString().split('T')[0];
-  const nonExpiredBulletins = bulletins.filter((b) => b.editionDate >= todayIso);
+  const nonExpiredBulletins = bulletins.filter(
+    (b) => b.status !== 'draft' && b.editionDate >= todayIso
+  );
   const currentBulletin =
     nonExpiredBulletins.find((b) => b.isCurrent) || nonExpiredBulletins[0];
 
-  // Bulletins Handlers (with Audit Trail)
+  // Bulletins Handlers (with Audit Trail & Draft/Published Status)
   const addBulletin = (b: Omit<Bulletin, 'id' | 'createdAt'>) => {
     const actor = getAuditActor();
+    const status = b.status || 'published';
     const newBulletin: Bulletin = {
       ...b,
+      status,
+      isCurrent: status === 'draft' ? false : Boolean(b.isCurrent),
       id: `bol-${Date.now()}`,
       createdAt: actor.nowIso,
       createdByName: actor.name,
@@ -1367,22 +1377,29 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'boletins', newBulletin);
       }
     }
-    showToast('Novo boletim publicado e salvo no banco de dados!');
+    showToast(
+      status === 'draft'
+        ? 'Rascunho do boletim salvo!'
+        : 'Boletim publicado e salvo no banco de dados!'
+    );
   };
 
   const updateBulletin = (id: string, b: Partial<Bulletin>) => {
     const actor = getAuditActor();
     const updatedList = bulletins.map((item) => {
       if (item.id === id) {
+        const nextStatus = b.status || item.status || 'published';
         return {
           ...item,
           ...b,
+          status: nextStatus,
+          isCurrent: nextStatus === 'draft' ? false : Boolean(b.isCurrent ?? item.isCurrent),
           updatedByName: actor.name,
           updatedByEmail: actor.email,
           updatedAt: actor.nowIso
         };
       }
-      if (b.isCurrent) {
+      if (b.isCurrent && b.status !== 'draft') {
         return { ...item, isCurrent: false };
       }
       return item;
@@ -1393,7 +1410,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activeChurch && isManagerAuthenticated) {
       void CloudChurchService.replaceSubcollectionItems(activeChurch.id, 'boletins', updatedList);
     }
-    showToast('Boletim atualizado no banco de dados!');
+    showToast(
+      b.status === 'draft' ? 'Boletim salvo como rascunho!' : 'Boletim atualizado e publicado!'
+    );
   };
 
   const deleteBulletin = (id: string) => {
@@ -1413,6 +1432,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       isCurrent: item.id === id,
       ...(item.id === id
         ? {
+            status: 'published' as const,
             updatedByName: actor.name,
             updatedByEmail: actor.email,
             updatedAt: actor.nowIso
@@ -1510,11 +1530,13 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return parsed.length;
   };
 
-  // Deacon Schedules Handlers (with Audit Trail)
+  // Deacon Schedules Handlers (with Audit Trail & Draft/Published Status)
   const addDeaconSchedule = (item: Omit<DeaconScheduleItem, 'id'>) => {
     const actor = getAuditActor();
+    const status = item.status || 'published';
     const newItem: DeaconScheduleItem = {
       ...item,
+      status,
       id: `deac-${Date.now()}`,
       createdByName: actor.name,
       createdByEmail: actor.email,
@@ -1528,7 +1550,11 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activeChurch && isManagerAuthenticated) {
       void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'escalas', newItem);
     }
-    showToast('Escala diaconal salva no banco de dados!');
+    showToast(
+      status === 'draft'
+        ? 'Rascunho da escala salvo!'
+        : 'Escala diaconal publicada no banco de dados!'
+    );
   };
 
   const updateDeaconSchedule = (id: string, item: Partial<DeaconScheduleItem>) => {
@@ -1539,6 +1565,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updatedTarget = {
           ...s,
           ...item,
+          status: item.status || s.status || 'published',
           updatedByName: actor.name,
           updatedByEmail: actor.email,
           updatedAt: actor.nowIso
@@ -1552,7 +1579,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activeChurch && isManagerAuthenticated && updatedTarget) {
       void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'escalas', updatedTarget);
     }
-    showToast('Escala diaconal atualizada!');
+    showToast(
+      item.status === 'draft' ? 'Escala salva como rascunho!' : 'Escala diaconal atualizada!'
+    );
   };
 
   const deleteDeaconSchedule = (id: string) => {
@@ -1565,12 +1594,13 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     showToast('Escala diaconal excluída!');
   };
 
-  // Banners Handlers (with Audit Trail)
+  // Banners Handlers (with Audit Trail & Draft/Published Status)
   const getBannersByPosition = (pos: BannerPosition): Banner[] => {
     const now = new Date().toISOString().split('T')[0];
     return banners
       .filter((b) => {
         if (!b.isActive) return false;
+        if (b.status === 'draft') return false;
         if (b.position !== pos) return false;
         if (b.startDate && b.startDate > now) return false;
         if (b.endDate && b.endDate < now) return false;
@@ -1581,8 +1611,11 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const addBanner = (banner: Omit<Banner, 'id'>) => {
     const actor = getAuditActor();
+    const status = banner.status || 'published';
     const newBanner: Banner = {
       ...banner,
+      status,
+      isActive: status === 'draft' ? false : banner.isActive,
       id: `ban-${Date.now()}`,
       createdByName: actor.name,
       createdByEmail: actor.email,
@@ -1596,7 +1629,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activeChurch && isManagerAuthenticated) {
       void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'banners', newBanner);
     }
-    showToast('Banner adicionado e sincronizado!');
+    showToast(
+      status === 'draft' ? 'Banner salvo como rascunho!' : 'Banner publicado e sincronizado!'
+    );
   };
 
   const updateBanner = (id: string, banner: Partial<Banner>) => {
@@ -1604,9 +1639,12 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     let targetBanner: Banner | undefined;
     const updatedList = banners.map((b) => {
       if (b.id === id) {
+        const nextStatus = banner.status || b.status || 'published';
         targetBanner = {
           ...b,
           ...banner,
+          status: nextStatus,
+          isActive: nextStatus === 'draft' ? false : Boolean(banner.isActive ?? b.isActive),
           updatedByName: actor.name,
           updatedByEmail: actor.email,
           updatedAt: actor.nowIso
@@ -1620,7 +1658,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (activeChurch && isManagerAuthenticated && targetBanner) {
       void CloudChurchService.saveSubcollectionItem(activeChurch.id, 'banners', targetBanner);
     }
-    showToast('Banner atualizado!');
+    showToast(banner.status === 'draft' ? 'Banner salvo como rascunho!' : 'Banner atualizado!');
   };
 
   const deleteBanner = (id: string) => {

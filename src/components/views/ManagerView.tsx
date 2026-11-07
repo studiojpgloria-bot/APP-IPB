@@ -44,7 +44,12 @@ import {
 } from 'lucide-react';
 import { activeFirebaseConfig } from '../../config/firebase';
 import { useChurch } from '../../context/ChurchContext';
-import { slugifyChurchName } from '../../services/cloudDatabase';
+import {
+  DAYS_OF_WEEK,
+  formatTimeStandard,
+  slugifyChurchName,
+  standardTimeToHtmlTime
+} from '../../services/cloudDatabase';
 import { ChurchStorageService } from '../../services/storage';
 import {
   Banner,
@@ -55,9 +60,10 @@ import {
   DeaconScheduleCategory,
   DeaconScheduleItem,
   LeaderMember,
+  PublicationStatus,
   ScheduleItem
 } from '../../types';
-import { CATEGORY_META } from './DeaconScheduleView';
+import { buildDeaconCategories, getDeaconCategoryMeta } from './DeaconScheduleView';
 
 type ManagerTab = 'info' | 'bulletins' | 'deacons' | 'birthdays' | 'banners' | 'team' | 'settings';
 
@@ -70,6 +76,37 @@ const PRESET_THEME_COLORS = [
   { name: 'Grafite Sóbrio', hex: '#1F2937' }
 ];
 
+function formatLastEditedLabel(item?: {
+  updatedByName?: string;
+  createdByName?: string;
+  updatedByEmail?: string;
+  createdByEmail?: string;
+  updatedAt?: string;
+  createdAt?: string;
+}): string | null {
+  if (!item) return null;
+  const author =
+    item.updatedByName || item.createdByName || item.updatedByEmail || item.createdByEmail;
+  const rawDate = item.updatedAt || item.createdAt;
+  if (!author && !rawDate) return null;
+  const formattedDate = rawDate
+    ? new Date(rawDate).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    : '';
+  if (author && formattedDate) {
+    return `Última edição por ${author} em ${formattedDate}`;
+  }
+  if (author) {
+    return `Última edição por ${author}`;
+  }
+  return `Última edição em ${formattedDate}`;
+}
+
 export const ManagerView: React.FC = () => {
   const {
     isManagerAuthenticated,
@@ -78,7 +115,6 @@ export const ManagerView: React.FC = () => {
     platformUser,
     activeChurch,
     managedChurches,
-    currentUserTeamRole,
     isChurchAdmin,
     isCreatingAdditionalChurch,
     setIsCreatingAdditionalChurch,
@@ -161,7 +197,7 @@ export const ManagerView: React.FC = () => {
   const [wizTagline, setWizTagline] = useState('');
   const [wizSchedules, setWizSchedules] = useState<ScheduleItem[]>([]);
   const [wizSchDay, setWizSchDay] = useState('Domingo');
-  const [wizSchTime, setWizSchTime] = useState('19h00');
+  const [wizSchTime, setWizSchTime] = useState('19h30');
   const [wizSchTitle, setWizSchTitle] = useState('');
   const [wizSubmitting, setWizSubmitting] = useState(false);
 
@@ -181,13 +217,17 @@ export const ManagerView: React.FC = () => {
   const [inviteEmailInput, setInviteEmailInput] = useState('');
   const [inviteRoleInput, setInviteRoleInput] = useState<'admin' | 'editor'>('editor');
   const [invitingManager, setInvitingManager] = useState(false);
+  const [lastInvitedMember, setLastInvitedMember] = useState<{
+    email: string;
+    role: 'admin' | 'editor';
+  } | null>(null);
 
   // --- Church Info Form State ---
   const [infoForm, setInfoForm] = useState<ChurchInfo>(churchInfo);
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
   const [newSchedule, setNewSchedule] = useState<Partial<ScheduleItem>>({
     day: 'Domingo',
-    time: '19h00',
+    time: '19h30',
     title: '',
     description: '',
     location: 'Templo Principal'
@@ -210,6 +250,7 @@ export const ManagerView: React.FC = () => {
     editionDate: new Date().toISOString().split('T')[0],
     summary: '',
     isCurrent: false,
+    status: 'published',
     type: 'text',
     themeVerse: '',
     pastoralWord: '',
@@ -242,13 +283,14 @@ export const ManagerView: React.FC = () => {
   const [editingDeaconId, setEditingDeaconId] = useState<string | null>(null);
   const [deaconCategoryFilter, setDeaconCategoryFilter] = useState<'ALL' | DeaconScheduleCategory>('ALL');
   const [deaconForm, setDeaconForm] = useState<Partial<DeaconScheduleItem>>({
-    category: 'domingo_manha',
+    category: 'evento_especial',
     date: new Date().toISOString().split('T')[0],
-    serviceName: 'Domingo pela Manhã — Culto Matutino & EBD',
-    time: '09h00',
+    serviceName: '',
+    time: '19h30',
     coordinator: '',
     coordinatorPhone: '',
-    notes: ''
+    notes: '',
+    status: 'published'
   });
   const [receptionInput, setReceptionInput] = useState('');
   const [offeringInput, setOfferingInput] = useState('');
@@ -266,8 +308,11 @@ export const ManagerView: React.FC = () => {
     startDate: '',
     endDate: '',
     order: 1,
-    isActive: true
+    isActive: true,
+    status: 'published'
   });
+
+  const dynamicDeaconCategories = buildDeaconCategories(infoForm.schedules);
 
   useEffect(() => {
     setInfoForm(churchInfo);
@@ -561,13 +606,15 @@ export const ManagerView: React.FC = () => {
       return;
     }
 
+    const standardizedTime = formatTimeStandard(newSchedule.time.trim() || '19h30');
+
     if (editingScheduleId) {
       const updatedSchedules = infoForm.schedules.map((s) =>
         s.id === editingScheduleId
           ? {
               ...s,
               day: newSchedule.day?.trim() || 'Domingo',
-              time: newSchedule.time?.trim() || '19h00',
+              time: standardizedTime,
               title: newSchedule.title!.trim(),
               description: newSchedule.description?.trim() || '',
               location: newSchedule.location?.trim() || 'Templo Principal'
@@ -582,7 +629,7 @@ export const ManagerView: React.FC = () => {
       const item: ScheduleItem = {
         id: `sch-${Date.now()}`,
         day: newSchedule.day?.trim() || 'Domingo',
-        time: newSchedule.time?.trim() || '19h00',
+        time: standardizedTime,
         title: newSchedule.title.trim(),
         description: newSchedule.description?.trim() || '',
         location: newSchedule.location?.trim() || 'Templo Principal'
@@ -595,18 +642,30 @@ export const ManagerView: React.FC = () => {
       updateChurchInfo(nextInfo);
     }
 
-    setNewSchedule({ day: 'Domingo', time: '19h00', title: '', description: '', location: 'Templo Principal' });
+    setNewSchedule({ day: 'Domingo', time: '19h30', title: '', description: '', location: 'Templo Principal' });
   };
 
   const handleEditSchedule = (sch: ScheduleItem) => {
     setEditingScheduleId(sch.id);
     setNewSchedule({
       day: sch.day,
-      time: sch.time,
+      time: formatTimeStandard(sch.time),
       title: sch.title,
       description: sch.description,
       location: sch.location || 'Templo Principal'
     });
+  };
+
+  const handleDuplicateSchedule = (sch: ScheduleItem) => {
+    setEditingScheduleId(null);
+    setNewSchedule({
+      day: sch.day,
+      time: formatTimeStandard(sch.time),
+      title: sch.title,
+      description: sch.description,
+      location: sch.location || 'Templo Principal'
+    });
+    showToast('Horário copiado para o formulário! Ajuste o dia ou horário e clique em Salvar.');
   };
 
   const handleRemoveSchedule = (id: string) => {
@@ -618,7 +677,7 @@ export const ManagerView: React.FC = () => {
     updateChurchInfo(nextInfo);
     if (editingScheduleId === id) {
       setEditingScheduleId(null);
-      setNewSchedule({ day: 'Domingo', time: '19h00', title: '', description: '', location: 'Templo Principal' });
+      setNewSchedule({ day: 'Domingo', time: '19h30', title: '', description: '', location: 'Templo Principal' });
     }
   };
 
@@ -708,10 +767,15 @@ export const ManagerView: React.FC = () => {
   };
 
   // 2. Bulletin Handlers
-  const handleOpenBulletinModal = (b?: Bulletin) => {
+  const handleOpenBulletinModal = (b?: Bulletin, duplicate = false) => {
     if (b) {
-      setEditingBulletinId(b.id);
-      setBulletinForm({ ...b });
+      setEditingBulletinId(duplicate ? null : b.id);
+      setBulletinForm({
+        ...b,
+        editionDate: duplicate ? new Date().toISOString().split('T')[0] : b.editionDate,
+        isCurrent: duplicate ? false : b.isCurrent,
+        status: duplicate ? 'draft' : b.status || 'published'
+      });
       setLiturgyInputText(b.orderOfService ? b.orderOfService.join('\n') : '');
       setAnnouncementsInputText(b.announcements ? b.announcements.join('\n') : '');
     } else {
@@ -720,7 +784,8 @@ export const ManagerView: React.FC = () => {
         title: '',
         editionDate: new Date().toISOString().split('T')[0],
         summary: '',
-        isCurrent: bulletins.length === 0,
+        isCurrent: bulletins.filter((x) => x.status !== 'draft').length === 0,
+        status: 'published',
         type: 'text',
         themeVerse: '',
         pastoralWord: '',
@@ -735,8 +800,7 @@ export const ManagerView: React.FC = () => {
     setBulletinModalOpen(true);
   };
 
-  const handleSaveBulletin = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveBulletinWithStatus = (status: PublicationStatus) => {
     if (!bulletinForm.title || !bulletinForm.editionDate) {
       showToast('Título e data são obrigatórios.', 'error');
       return;
@@ -755,7 +819,8 @@ export const ManagerView: React.FC = () => {
       title: bulletinForm.title,
       editionDate: bulletinForm.editionDate,
       summary: bulletinForm.summary || '',
-      isCurrent: Boolean(bulletinForm.isCurrent),
+      isCurrent: status === 'draft' ? false : Boolean(bulletinForm.isCurrent),
+      status,
       type: bulletinForm.type || 'text',
       themeVerse: bulletinForm.themeVerse || '',
       pastoralWord: bulletinForm.pastoralWord || '',
@@ -772,6 +837,11 @@ export const ManagerView: React.FC = () => {
     }
 
     setBulletinModalOpen(false);
+  };
+
+  const handleSaveBulletin = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSaveBulletinWithStatus(bulletinForm.status || 'published');
   };
 
   // 3. Birthday Handlers
@@ -838,72 +908,65 @@ export const ManagerView: React.FC = () => {
     setCsvParsedPreview([]);
   };
 
-  // 3B. Deacon Schedule Handlers
-  const getCategoryDefaultValues = (category: DeaconScheduleCategory) => {
-    switch (category) {
-      case 'semana_oracao':
-        return {
-          serviceName: '1ª Semana do Mês — Semana de Oração',
-          time: '19h30',
-          notes: 'Plantão especial da 1ª Semana do Mês (Semana de Oração).'
-        };
-      case 'quinta_estudo':
-        return {
-          serviceName: 'Quinta-feira — Culto de Estudo e Oração',
-          time: '19h30',
-          notes: 'Plantão de quinta-feira para o Culto de Estudo e Oração.'
-        };
-      case 'domingo_manha':
-        return {
-          serviceName: 'Domingo pela Manhã — Culto Matutino & EBD',
-          time: '09h00',
-          notes: 'Culto dominical pela manhã e recepção da Escola Bíblica.'
-        };
-      case 'domingo_noite':
-        return {
-          serviceName: 'Domingo à Noite — Culto Vespertino',
-          time: '19h00',
-          notes: 'Culto dominical à noite.'
-        };
-      case 'evento_especial':
-        return {
-          serviceName: 'Evento Especial — Programação Extraordinária',
-          time: '19h30',
-          notes: 'Espaço reservado para evento especial da igreja.'
-        };
+  // 3B. Deacon Schedule Handlers (Dynamic Categories from Church Schedules + Evento especial)
+  const getCategoryDefaultValues = (categoryId: DeaconScheduleCategory) => {
+    const matched = dynamicDeaconCategories.find((c) => c.id === categoryId) || dynamicDeaconCategories[0];
+    if (matched) {
+      return {
+        category: matched.id,
+        serviceName: matched.defaultServiceName,
+        time: formatTimeStandard(matched.defaultTime || '19h30'),
+        notes: ''
+      };
     }
+    return {
+      category: 'evento_especial',
+      serviceName: 'Evento Especial',
+      time: '19h30',
+      notes: ''
+    };
   };
 
   const handleOpenDeaconModal = (
     item?: DeaconScheduleItem,
     duplicate = false,
-    presetCategory: DeaconScheduleCategory = 'domingo_manha'
+    presetCategory?: DeaconScheduleCategory
   ) => {
+    const fallbackCategory = presetCategory || dynamicDeaconCategories[0]?.id || 'evento_especial';
     if (item) {
+      const resolvedMeta = getDeaconCategoryMeta(item, infoForm.schedules);
       setEditingDeaconId(duplicate ? null : item.id);
       setDeaconForm({
-        category: item.category || 'domingo_noite',
-        date: item.date,
+        category: resolvedMeta.id,
+        date: duplicate ? new Date().toISOString().split('T')[0] : item.date,
         serviceName: item.serviceName,
-        time: item.time,
+        time: formatTimeStandard(item.time),
         coordinator: item.coordinator,
         coordinatorPhone: item.coordinatorPhone || '',
-        notes: item.notes || ''
+        notes: item.notes || '',
+        status: duplicate ? 'draft' : item.status || 'published',
+        updatedByName: item.updatedByName,
+        createdByName: item.createdByName,
+        updatedByEmail: item.updatedByEmail,
+        createdByEmail: item.createdByEmail,
+        updatedAt: item.updatedAt,
+        createdAt: item.createdAt
       });
       setReceptionInput(item.receptionTeam.join(', '));
       setOfferingInput(item.offeringAndCommunionTeam.join(', '));
       setParkingInput(item.parkingAndOrderTeam.join(', '));
     } else {
-      const defaults = getCategoryDefaultValues(presetCategory);
+      const defaults = getCategoryDefaultValues(fallbackCategory);
       setEditingDeaconId(null);
       setDeaconForm({
-        category: presetCategory,
+        category: defaults.category,
         date: new Date().toISOString().split('T')[0],
         serviceName: defaults.serviceName,
         time: defaults.time,
         coordinator: '',
         coordinatorPhone: '',
-        notes: defaults.notes
+        notes: defaults.notes,
+        status: 'published'
       });
       setReceptionInput('');
       setOfferingInput('');
@@ -917,13 +980,12 @@ export const ManagerView: React.FC = () => {
     setDeaconForm((prev) => ({
       ...prev,
       category: cat,
-      serviceName: !editingDeaconId ? defaults.serviceName : prev.serviceName,
-      time: !editingDeaconId ? defaults.time : prev.time
+      serviceName: defaults.serviceName,
+      time: defaults.time
     }));
   };
 
-  const handleSaveDeaconSchedule = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveDeaconScheduleWithStatus = (status: PublicationStatus) => {
     if (!deaconForm.date || !deaconForm.serviceName || !deaconForm.coordinator) {
       showToast('Preencha data, nome do culto e diácono coordenador.', 'error');
       return;
@@ -936,16 +998,17 @@ export const ManagerView: React.FC = () => {
         .filter(Boolean);
 
     const payload: Omit<DeaconScheduleItem, 'id'> = {
-      category: (deaconForm.category as DeaconScheduleCategory) || 'domingo_noite',
+      category: (deaconForm.category as DeaconScheduleCategory) || 'evento_especial',
       date: deaconForm.date,
       serviceName: deaconForm.serviceName,
-      time: deaconForm.time || '19h00',
+      time: formatTimeStandard(deaconForm.time || '19h30'),
       coordinator: deaconForm.coordinator,
       coordinatorPhone: deaconForm.coordinatorPhone || undefined,
       receptionTeam: parseTeam(receptionInput),
       offeringAndCommunionTeam: parseTeam(offeringInput),
       parkingAndOrderTeam: parseTeam(parkingInput),
-      notes: deaconForm.notes || undefined
+      notes: deaconForm.notes || undefined,
+      status
     };
 
     if (editingDeaconId) {
@@ -957,11 +1020,16 @@ export const ManagerView: React.FC = () => {
     setDeaconModalOpen(false);
   };
 
+  const handleSaveDeaconSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSaveDeaconScheduleWithStatus(deaconForm.status || 'published');
+  };
+
   // 4. Banner Handlers
   const handleOpenBannerModal = (banner?: Banner) => {
     if (banner) {
       setEditingBannerId(banner.id);
-      setBannerForm({ ...banner });
+      setBannerForm({ ...banner, status: banner.status || 'published' });
     } else {
       setEditingBannerId(null);
       setBannerForm({
@@ -973,14 +1041,14 @@ export const ManagerView: React.FC = () => {
         startDate: '',
         endDate: '',
         order: banners.length + 1,
-        isActive: true
+        isActive: true,
+        status: 'published'
       });
     }
     setBannerModalOpen(true);
   };
 
-  const handleSaveBanner = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveBannerWithStatus = (status: PublicationStatus) => {
     if (!bannerForm.title || !bannerForm.imageUrl) {
       showToast('Título e imagem do banner são obrigatórios.', 'error');
       return;
@@ -995,7 +1063,8 @@ export const ManagerView: React.FC = () => {
       startDate: bannerForm.startDate || undefined,
       endDate: bannerForm.endDate || undefined,
       order: Number(bannerForm.order || 1),
-      isActive: bannerForm.isActive !== false
+      isActive: status === 'draft' ? false : bannerForm.isActive !== false,
+      status
     };
 
     if (editingBannerId) {
@@ -1005,6 +1074,11 @@ export const ManagerView: React.FC = () => {
     }
 
     setBannerModalOpen(false);
+  };
+
+  const handleSaveBanner = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSaveBannerWithStatus(bannerForm.status || 'published');
   };
 
   // 5. Backup Export/Import
@@ -1060,12 +1134,30 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
     setTimeout(() => setCopiedEnvVars(false), 3000);
   };
 
+  const buildTeamInviteMessage = (email: string, role: 'admin' | 'editor') => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const roleLabel = role === 'admin' ? 'Administrador(a)' : 'Editor(a)';
+    return `Olá! Você foi convidado(a) para fazer parte da equipe da igreja *${activeChurch?.name || 'nossa igreja'}* como *${roleLabel}*.\n\nPara acessar o painel:\n1. Acesse o link: ${origin}/gestor\n2. Entre com sua Conta Google ou crie sua conta usando exatamente o e-mail convidado: ${email}`;
+  };
+
+  const handleCopyInviteMessage = (email: string, role: 'admin' | 'editor') => {
+    navigator.clipboard.writeText(buildTeamInviteMessage(email, role));
+    showToast('Mensagem de convite copiada para a área de transferência!');
+  };
+
+  const handleSendInviteWhatsApp = (email: string, role: 'admin' | 'editor') => {
+    const msg = buildTeamInviteMessage(email, role);
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+  };
+
   const handleInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmailInput.trim()) return;
+    const cleanEmail = inviteEmailInput.trim().toLowerCase();
+    if (!cleanEmail) return;
     setInvitingManager(true);
     try {
-      await inviteTeamMemberByEmail(inviteEmailInput, inviteRoleInput);
+      await inviteTeamMemberByEmail(cleanEmail, inviteRoleInput);
+      setLastInvitedMember({ email: cleanEmail, role: inviteRoleInput });
       setInviteEmailInput('');
     } finally {
       setInvitingManager(false);
@@ -1587,7 +1679,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     className="p-2.5 rounded-xl bg-white border border-stone-200 flex items-center justify-between text-xs"
                   >
                     <span>
-                      <strong>{s.day} às {s.time}:</strong> {s.title}
+                      <strong>{s.day} às {formatTimeStandard(s.time)}:</strong> {s.title}
                     </span>
                     <button
                       type="button"
@@ -1602,20 +1694,28 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-              <input
-                type="text"
+              <select
                 value={wizSchDay}
                 onChange={(e) => setWizSchDay(e.target.value)}
-                placeholder="Dia (ex: Domingo)"
-                className="p-2 text-xs rounded-xl border border-stone-300 bg-white"
-              />
-              <input
-                type="text"
-                value={wizSchTime}
-                onChange={(e) => setWizSchTime(e.target.value)}
-                placeholder="Hora (ex: 19h00)"
-                className="p-2 text-xs rounded-xl border border-stone-300 bg-white"
-              />
+                className="p-2 text-xs rounded-xl border border-stone-300 bg-white font-medium"
+              >
+                {DAYS_OF_WEEK.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-2">
+                <input
+                  type="time"
+                  value={standardTimeToHtmlTime(wizSchTime)}
+                  onChange={(e) => setWizSchTime(formatTimeStandard(e.target.value))}
+                  className="w-full py-2 text-xs bg-transparent focus:outline-none"
+                />
+                <span className="text-[10px] font-mono font-bold text-[#344E41] bg-[#EAF0EC] px-1.5 py-0.5 rounded shrink-0">
+                  {formatTimeStandard(wizSchTime)}
+                </span>
+              </div>
               <input
                 type="text"
                 value={wizSchTitle}
@@ -1632,7 +1732,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     {
                       id: `sch-${Date.now()}`,
                       day: wizSchDay || 'Domingo',
-                      time: wizSchTime || '19h00',
+                      time: formatTimeStandard(wizSchTime || '19h30'),
                       title: wizSchTitle.trim(),
                       description: '',
                       location: 'Templo Principal'
@@ -2275,45 +2375,77 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {infoForm.schedules.map((sch) => (
-                <div
-                  key={sch.id}
-                  className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 transition-colors ${
-                    editingScheduleId === sch.id
-                      ? 'bg-[#EAF0EC]/60 border-[#344E41]'
-                      : 'bg-stone-50 border-stone-200'
-                  }`}
+            {infoForm.schedules.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-stone-50 border border-stone-200/80 text-center space-y-3">
+                <Clock className="w-7 h-7 text-stone-300 mx-auto" />
+                <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+                <p className="text-xs text-stone-500">
+                  Cadastre os horários de cultos da igreja no formulário abaixo. Eles também geram automaticamente as categorias da Escala Diaconal.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('schedule-title-input');
+                    el?.focus();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
                 >
-                  <div className="min-w-0">
-                    <span className="font-bold text-xs text-[#344E41]">
-                      {sch.day} às {sch.time}
-                    </span>
-                    <h4 className="font-bold text-sm text-stone-900 mt-0.5">{sch.title}</h4>
-                    <p className="text-xs text-stone-500">{sch.description}</p>
-                    {sch.location && (
-                      <p className="text-[11px] text-stone-400 mt-0.5">Local: {sch.location}</p>
-                    )}
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Adicionar Horário de Culto</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {infoForm.schedules.map((sch) => (
+                  <div
+                    key={sch.id}
+                    className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 transition-colors ${
+                      editingScheduleId === sch.id
+                        ? 'bg-[#EAF0EC]/60 border-[#344E41]'
+                        : 'bg-stone-50 border-stone-200'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <span className="font-bold text-xs text-[#344E41]">
+                        {sch.day} às {formatTimeStandard(sch.time)}
+                      </span>
+                      <h4 className="font-bold text-sm text-stone-900 mt-0.5">{sch.title}</h4>
+                      {sch.description && <p className="text-xs text-stone-500">{sch.description}</p>}
+                      {sch.location && (
+                        <p className="text-[11px] text-stone-400 mt-0.5">Local: {sch.location}</p>
+                      )}
+                    </div>
+                    <div className="pt-2 border-t border-stone-200/70 flex items-center justify-end gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicateSchedule(sch)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-stone-700 text-[11px] font-semibold flex items-center gap-1"
+                        title="Duplicar este horário para ajustar dia ou hora"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Duplicar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEditSchedule(sch)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-[11px] font-bold flex items-center gap-1"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>Editar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSchedule(sch.id)}
+                        className="px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-[11px] font-semibold flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Excluir</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleEditSchedule(sch)}
-                      className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveSchedule(sch.id)}
-                      className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
             <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200/80 space-y-3">
               <div className="flex items-center justify-between">
@@ -2327,7 +2459,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                       setEditingScheduleId(null);
                       setNewSchedule({
                         day: 'Domingo',
-                        time: '19h00',
+                        time: '19h30',
                         title: '',
                         description: '',
                         location: 'Templo Principal'
@@ -2340,27 +2472,49 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  placeholder="Dia (ex: Domingo)"
-                  value={newSchedule.day}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, day: e.target.value })}
-                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="Horário (ex: 19h30)"
-                  value={newSchedule.time}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
-                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="Título (ex: Culto Dominical)"
-                  value={newSchedule.title}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, title: e.target.value })}
-                  className="p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
-                />
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-600 mb-1">Dia da Semana *</label>
+                  <select
+                    value={newSchedule.day || 'Domingo'}
+                    onChange={(e) => setNewSchedule({ ...newSchedule, day: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white font-medium"
+                  >
+                    {DAYS_OF_WEEK.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-600 mb-1">
+                    Horário Padronizado ({formatTimeStandard(newSchedule.time || '19h30')}) *
+                  </label>
+                  <div className="flex items-center gap-2 rounded-xl border border-stone-300 bg-white px-2.5">
+                    <input
+                      type="time"
+                      value={standardTimeToHtmlTime(newSchedule.time || '19h30')}
+                      onChange={(e) =>
+                        setNewSchedule({ ...newSchedule, time: formatTimeStandard(e.target.value) })
+                      }
+                      className="w-full py-2 text-xs bg-transparent focus:outline-none"
+                    />
+                    <span className="text-[11px] font-mono font-bold text-[#344E41] bg-[#EAF0EC] px-2 py-0.5 rounded shrink-0">
+                      {formatTimeStandard(newSchedule.time || '19h30')}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-600 mb-1">Nome do Culto / Programação *</label>
+                  <input
+                    id="schedule-title-input"
+                    type="text"
+                    placeholder="Ex: Culto Dominical / EBD"
+                    value={newSchedule.title}
+                    onChange={(e) => setNewSchedule({ ...newSchedule, title: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input
@@ -2405,72 +2559,94 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {infoForm.leadership.map((l) => (
-                <div
-                  key={l.id}
-                  className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 transition-all ${
-                    editingLeaderId === l.id
-                      ? 'bg-[#EAF0EC]/60 border-[#344E41] ring-1 ring-[#344E41]/30'
-                      : 'bg-stone-50 border-stone-200'
-                  }`}
+            {infoForm.leadership.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-stone-50 border border-stone-200/80 text-center space-y-3">
+                <Users className="w-7 h-7 text-stone-300 mx-auto" />
+                <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+                <p className="text-xs text-stone-500">
+                  Utilize o formulário abaixo para adicionar pastores, presbíteros ou líderes da sua igreja.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('leader-name-input');
+                    el?.focus();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
                 >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="relative shrink-0">
-                      {l.photoUrl ? (
-                        <img
-                          src={l.photoUrl}
-                          alt={l.name}
-                          className="w-14 h-14 rounded-2xl object-cover border-2 border-white shadow-2xs"
-                        />
-                      ) : (
-                        <div className="w-14 h-14 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center font-bold text-lg">
-                          {l.name.charAt(0)}
-                        </div>
-                      )}
-                      <label
-                        className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#344E41] hover:bg-[#284136] text-white flex items-center justify-center cursor-pointer shadow-xs"
-                        title="Fazer upload de nova foto"
-                      >
-                        <Upload className="w-3 h-3" />
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) =>
-                            handleFileUpload(e, (b64) => handleQuickLeaderPhotoUpload(l.id, b64), 500)
-                          }
-                          className="hidden"
-                        />
-                      </label>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar Líder</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {infoForm.leadership.map((l) => (
+                  <div
+                    key={l.id}
+                    className={`p-4 rounded-2xl border flex flex-col justify-between gap-3 transition-all ${
+                      editingLeaderId === l.id
+                        ? 'bg-[#EAF0EC]/60 border-[#344E41] ring-1 ring-[#344E41]/30'
+                        : 'bg-stone-50 border-stone-200'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="relative shrink-0">
+                        {l.photoUrl ? (
+                          <img
+                            src={l.photoUrl}
+                            alt={l.name}
+                            className="w-14 h-14 rounded-2xl object-cover border-2 border-white shadow-2xs"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-2xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center font-bold text-lg">
+                            {l.name.charAt(0)}
+                          </div>
+                        )}
+                        <label
+                          className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#344E41] hover:bg-[#284136] text-white flex items-center justify-center cursor-pointer shadow-xs"
+                          title="Fazer upload de nova foto"
+                        >
+                          <Upload className="w-3 h-3" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              handleFileUpload(e, (b64) => handleQuickLeaderPhotoUpload(l.id, b64), 500)
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-bold text-xs sm:text-sm text-stone-900 truncate">{l.name}</h4>
+                        <p className="text-[11px] font-semibold text-[#344E41] truncate">{l.role}</p>
+                        {l.phone && <p className="text-[11px] text-stone-500 truncate mt-0.5">{l.phone}</p>}
+                        {l.bio && <p className="text-[11px] text-stone-500 line-clamp-2 mt-1">{l.bio}</p>}
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h4 className="font-bold text-xs sm:text-sm text-stone-900 truncate">{l.name}</h4>
-                      <p className="text-[11px] font-semibold text-[#344E41] truncate">{l.role}</p>
-                      {l.phone && <p className="text-[11px] text-stone-500 truncate mt-0.5">{l.phone}</p>}
-                      {l.bio && <p className="text-[11px] text-stone-500 line-clamp-2 mt-1">{l.bio}</p>}
-                    </div>
-                  </div>
 
-                  <div className="pt-2.5 border-t border-stone-200/70 flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleEditLeader(l)}
-                      className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-[11px] font-bold flex items-center gap-1"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                      <span>Editar</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveLeader(l.id)}
-                      className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200 shrink-0"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="pt-2.5 border-t border-stone-200/70 flex items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleEditLeader(l)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-[11px] font-bold flex items-center gap-1"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>Editar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLeader(l.id)}
+                        className="px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-[11px] font-semibold flex items-center gap-1 shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Excluir</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
             {/* Add / Edit leader subform */}
             <div className="p-5 bg-stone-50 rounded-2xl border border-stone-200/80 space-y-4">
@@ -2525,6 +2701,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 <div>
                   <label className="block text-[11px] font-bold text-stone-700 mb-1">Nome Completo *</label>
                   <input
+                    id="leader-name-input"
                     type="text"
                     placeholder="Nome do Pastor, Presbítero ou Diácono"
                     value={newLeader.name || ''}
@@ -2599,7 +2776,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             <div>
               <h3 className="font-bold text-stone-900 text-lg">Gerenciar Boletins Informativos</h3>
               <p className="text-xs text-stone-500">
-                Subcoleção <code>boletins</code> da igreja. O card de destaque exibe sempre boletins atuais/futuros.
+                Subcoleção <code>boletins</code> da igreja. Rascunhos ficam visíveis apenas aqui no painel até serem publicados.
               </p>
             </div>
             <button
@@ -2611,84 +2788,133 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </button>
           </div>
 
-          <div className="space-y-3">
-            {bulletins.map((b) => (
-              <div
-                key={b.id}
-                className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                  b.isCurrent ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-200' : 'bg-stone-50 border-stone-200'
-                }`}
+          {bulletins.length === 0 ? (
+            <div className="p-10 rounded-2xl bg-stone-50 border border-stone-200/80 text-center space-y-3">
+              <FileText className="w-8 h-8 text-stone-300 mx-auto" />
+              <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+              <p className="text-xs text-stone-500">
+                Crie o primeiro boletim semanal da igreja (em texto ou PDF) ou salve como rascunho para revisar depois.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleOpenBulletinModal()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
               >
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#344E41] bg-white px-2 py-0.5 rounded border border-stone-200">
-                      {b.type === 'pdf' ? 'PDF' : 'Digital'}
-                    </span>
-                    {b.isCurrent && (
-                      <span className="text-[10px] font-bold bg-[#344E41] text-white px-2 py-0.5 rounded-full">
-                        Edição Atual
-                      </span>
-                    )}
-                    <span className="text-xs text-stone-500">
-                      Data: {new Date(b.editionDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    </span>
-                  </div>
-                  <h4 className="font-bold text-stone-900 text-base leading-snug">{b.title}</h4>
-                  <p className="text-xs text-stone-600 line-clamp-1">{b.summary || b.pastoralWord}</p>
-                  {(b.updatedByName || b.createdByName || b.updatedByEmail || b.createdByEmail) && (
-                    <p className="text-[11px] text-stone-400 pt-0.5">
-                      Publicado/editado por:{' '}
-                      <strong className="text-stone-600">
-                        {b.updatedByName || b.createdByName || b.updatedByEmail || b.createdByEmail}
-                      </strong>
-                      {b.updatedAt && (
-                        <span>
-                          {' '}
-                          em {new Date(b.updatedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                <Plus className="w-3.5 h-3.5" />
+                <span>Criar Primeiro Boletim</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {bulletins.map((b) => {
+                const isDraft = b.status === 'draft';
+                const lastEditText = formatLastEditedLabel(b);
+                return (
+                  <div
+                    key={b.id}
+                    className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                      isDraft
+                        ? 'bg-amber-50/40 border-amber-200'
+                        : b.isCurrent
+                        ? 'bg-emerald-50/50 border-emerald-300 ring-1 ring-emerald-200'
+                        : 'bg-stone-50 border-stone-200'
+                    }`}
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#344E41] bg-white px-2 py-0.5 rounded border border-stone-200">
+                          {b.type === 'pdf' ? 'PDF' : 'Digital'}
                         </span>
+                        <span
+                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                            isDraft
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-emerald-100 text-emerald-800'
+                          }`}
+                        >
+                          {isDraft ? 'Rascunho' : 'Publicado'}
+                        </span>
+                        {b.isCurrent && !isDraft && (
+                          <span className="text-[10px] font-bold bg-[#344E41] text-white px-2 py-0.5 rounded-full">
+                            Edição Atual
+                          </span>
+                        )}
+                        <span className="text-xs text-stone-500">
+                          Data: {new Date(b.editionDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-stone-900 text-base leading-snug">{b.title}</h4>
+                      <p className="text-xs text-stone-600 line-clamp-1">{b.summary || b.pastoralWord}</p>
+                      {lastEditText && (
+                        <p className="text-[11px] text-stone-400 pt-0.5">{lastEditText}</p>
                       )}
-                    </p>
-                  )}
-                </div>
+                    </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  {!b.isCurrent && (
-                    <button
-                      onClick={() => setCurrentBulletin(b.id)}
-                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-800"
-                    >
-                      Tornar Atual
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setSelectedBulletinForReader(b)}
-                    className="p-2 text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleOpenBulletinModal(b)}
-                    className="p-2 text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() =>
-                      askConfirmation({
-                        title: 'Excluir Boletim?',
-                        message: `Tem certeza que deseja remover o boletim "${b.title}"?`,
-                        isDestructive: true,
-                        onConfirm: () => deleteBulletin(b.id)
-                      })
-                    }
-                    className="p-2 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                    <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      {isDraft && (
+                        <button
+                          type="button"
+                          onClick={() => updateBulletin(b.id, { status: 'published' })}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Publicar</span>
+                        </button>
+                      )}
+                      {!b.isCurrent && !isDraft && (
+                        <button
+                          type="button"
+                          onClick={() => setCurrentBulletin(b.id)}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-800"
+                        >
+                          Tornar Atual
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBulletinForReader(b)}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:text-stone-900 rounded-lg bg-white border border-stone-200 hover:bg-stone-100 flex items-center gap-1"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Ver</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenBulletinModal(b, true)}
+                        className="px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:text-stone-900 rounded-lg bg-white border border-stone-200 hover:bg-stone-100 flex items-center gap-1"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Duplicar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenBulletinModal(b)}
+                        className="px-2.5 py-1.5 text-xs font-bold text-[#344E41] rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] flex items-center gap-1"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          askConfirmation({
+                            title: 'Excluir Boletim?',
+                            message: `Tem certeza que deseja remover o boletim "${b.title}"?`,
+                            isDestructive: true,
+                            onConfirm: () => deleteBulletin(b.id)
+                          })
+                        }
+                        className="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Excluir</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -2720,92 +2946,119 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-stone-700">
-              <thead className="bg-stone-50 text-stone-500 font-bold uppercase text-[10px] tracking-wider border-b border-stone-200">
-                <tr>
-                  <th className="p-3">Nome do Membro</th>
-                  <th className="p-3">Data</th>
-                  <th className="p-3">Ministério</th>
-                  <th className="p-3">WhatsApp / Telefone</th>
-                  <th className="p-3 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {birthdays.map((person) => (
-                  <tr key={person.id} className="hover:bg-stone-50/60">
-                    <td className="p-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="relative shrink-0">
-                          {person.photoUrl ? (
-                            <img
-                              src={person.photoUrl}
-                              alt={person.name}
-                              className="w-9 h-9 rounded-full object-cover border border-stone-200"
-                            />
-                          ) : (
-                            <div className="w-9 h-9 rounded-full bg-[#EAF0EC] text-[#344E41] font-bold flex items-center justify-center">
-                              {person.name.charAt(0)}
-                            </div>
-                          )}
-                          <label
-                            className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#344E41] text-white flex items-center justify-center cursor-pointer"
-                            title="Enviar foto"
-                          >
-                            <Upload className="w-2.5 h-2.5" />
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) =>
-                                handleFileUpload(e, (b64) => updateBirthday(person.id, { photoUrl: b64 }), 450)
-                              }
-                              className="hidden"
-                            />
-                          </label>
-                        </div>
-                        <div>
-                          <span className="font-bold text-stone-900 block">{person.name}</span>
-                          {(person.updatedByName || person.createdByName || person.updatedByEmail || person.createdByEmail) && (
-                            <span className="text-[10px] text-stone-400 block">
-                              Por: {person.updatedByName || person.createdByName || person.updatedByEmail || person.createdByEmail}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-3 font-semibold text-stone-800">
-                      {person.birthDay.toString().padStart(2, '0')}/
-                      {person.birthMonth.toString().padStart(2, '0')}
-                      {person.birthYear ? `/${person.birthYear}` : ''}
-                    </td>
-                    <td className="p-3 text-stone-500">{person.ministry || '—'}</td>
-                    <td className="p-3 text-stone-500 font-mono">{person.phone || '—'}</td>
-                    <td className="p-3 text-right space-x-1">
-                      <button
-                        onClick={() => handleOpenBirthdayModal(person)}
-                        className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-200"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() =>
-                          askConfirmation({
-                            title: 'Excluir Aniversariante?',
-                            message: `Deseja remover ${person.name} da lista de aniversariantes?`,
-                            isDestructive: true,
-                            onConfirm: () => deleteBirthday(person.id)
-                          })
-                        }
-                        className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-200"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+          {birthdays.length === 0 ? (
+            <div className="p-10 rounded-2xl bg-stone-50 border border-stone-200/80 text-center space-y-3">
+              <CalendarHeart className="w-8 h-8 text-stone-300 mx-auto" />
+              <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+              <p className="text-xs text-stone-500">
+                Cadastre os aniversariantes da congregação manualmente ou importe uma planilha CSV.
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenBirthdayModal()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar Pessoa</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-stone-700">
+                <thead className="bg-stone-50 text-stone-500 font-bold uppercase text-[10px] tracking-wider border-b border-stone-200">
+                  <tr>
+                    <th className="p-3">Nome do Membro</th>
+                    <th className="p-3">Data</th>
+                    <th className="p-3">Ministério</th>
+                    <th className="p-3">WhatsApp / Telefone</th>
+                    <th className="p-3 text-right">Ações</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {birthdays.map((person) => {
+                    const lastEditText = formatLastEditedLabel(person);
+                    return (
+                      <tr key={person.id} className="hover:bg-stone-50/60">
+                        <td className="p-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="relative shrink-0">
+                              {person.photoUrl ? (
+                                <img
+                                  src={person.photoUrl}
+                                  alt={person.name}
+                                  className="w-9 h-9 rounded-full object-cover border border-stone-200"
+                                />
+                              ) : (
+                                <div className="w-9 h-9 rounded-full bg-[#EAF0EC] text-[#344E41] font-bold flex items-center justify-center">
+                                  {person.name.charAt(0)}
+                                </div>
+                              )}
+                              <label
+                                className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[#344E41] text-white flex items-center justify-center cursor-pointer"
+                                title="Enviar foto"
+                              >
+                                <Upload className="w-2.5 h-2.5" />
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) =>
+                                    handleFileUpload(e, (b64) => updateBirthday(person.id, { photoUrl: b64 }), 450)
+                                  }
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+                            <div>
+                              <span className="font-bold text-stone-900 block">{person.name}</span>
+                              {lastEditText && (
+                                <span className="text-[10px] text-stone-400 block">{lastEditText}</span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3 font-semibold text-stone-800">
+                          {person.birthDay.toString().padStart(2, '0')}/
+                          {person.birthMonth.toString().padStart(2, '0')}
+                          {person.birthYear ? `/${person.birthYear}` : ''}
+                        </td>
+                        <td className="p-3 text-stone-500">{person.ministry || '—'}</td>
+                        <td className="p-3 text-stone-500 font-mono">{person.phone || '—'}</td>
+                        <td className="p-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenBirthdayModal(person)}
+                              className="px-2.5 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-bold inline-flex items-center gap-1"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Editar</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                askConfirmation({
+                                  title: 'Excluir Aniversariante?',
+                                  message: `Deseja remover ${person.name} da lista de aniversariantes?`,
+                                  isDestructive: true,
+                                  onConfirm: () => deleteBirthday(person.id)
+                                })
+                              }
+                              className="px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-xs font-semibold inline-flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Excluir</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -2816,7 +3069,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             <div>
               <h3 className="font-bold text-stone-900 text-lg">Banners de Divulgação</h3>
               <p className="text-xs text-stone-500">
-                Subcoleção <code>banners</code> da igreja (TOPO, MEIO e RODAPÉ).
+                Subcoleção <code>banners</code> da igreja (TOPO, MEIO e RODAPÉ). Rascunhos não aparecem para os visitantes até serem publicados.
               </p>
             </div>
             <button
@@ -2828,93 +3081,147 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </button>
           </div>
 
-          {(['topo', 'meio', 'rodape'] as BannerPosition[]).map((pos) => {
-            const list = banners.filter((b) => b.position === pos).sort((a, b) => a.order - b.order);
-            const posLabels = {
-              topo: 'Posição 1: TOPO (Acima do Header da Página)',
-              meio: 'Posição 2: MEIO (Entre Atalhos e Destaques)',
-              rodape: 'Posição 3: RODAPÉ (Fim da Página)'
-            };
+          {banners.length === 0 ? (
+            <div className="p-10 rounded-2xl bg-stone-50 border border-stone-200/80 text-center space-y-3">
+              <ImageIcon className="w-8 h-8 text-stone-300 mx-auto" />
+              <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+              <p className="text-xs text-stone-500">
+                Adicione banners de eventos, avisos ou campanhas para o topo, meio ou rodapé do aplicativo.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleOpenBannerModal()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Adicionar Primeiro Banner</span>
+              </button>
+            </div>
+          ) : (
+            (['topo', 'meio', 'rodape'] as BannerPosition[]).map((pos) => {
+              const list = banners.filter((b) => b.position === pos).sort((a, b) => a.order - b.order);
+              const posLabels = {
+                topo: 'Posição 1: TOPO (Acima do Header da Página)',
+                meio: 'Posição 2: MEIO (Entre Atalhos e Destaques)',
+                rodape: 'Posição 3: RODAPÉ (Fim da Página)'
+              };
 
-            return (
-              <div key={pos} className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-xs uppercase tracking-wider text-stone-700">
-                    {posLabels[pos]} ({list.length})
-                  </h4>
-                </div>
+              return (
+                <div key={pos} className="p-5 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-xs uppercase tracking-wider text-stone-700">
+                      {posLabels[pos]} ({list.length})
+                    </h4>
+                  </div>
 
-                {list.length === 0 ? (
-                  <p className="text-xs text-stone-400 italic py-2">
-                    Nenhum banner cadastrado nesta posição.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {list.map((ban) => (
-                      <div
-                        key={ban.id}
-                        className={`p-3.5 bg-white rounded-xl border flex gap-3 items-center justify-between ${
-                          ban.isActive ? 'border-stone-200' : 'border-stone-200 opacity-60 bg-stone-100/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <img
-                            src={ban.imageUrl}
-                            alt={ban.title}
-                            className="w-16 h-11 object-cover rounded-lg border border-stone-200 shrink-0"
-                          />
-                          <div className="min-w-0">
-                            <span className="text-[10px] font-mono text-stone-400 block">
-                              Ordem: {ban.order} · {ban.isActive ? 'Ativo' : 'Inativo'}
-                            </span>
-                            <h5 className="font-bold text-xs text-stone-900 truncate">{ban.title}</h5>
-                            {(ban.updatedByName || ban.createdByName || ban.updatedByEmail || ban.createdByEmail) && (
-                              <span className="text-[10px] text-stone-400 block truncate">
-                                Por: {ban.updatedByName || ban.createdByName || ban.updatedByEmail || ban.createdByEmail}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => toggleBannerActive(ban.id)}
-                            className={`px-2 py-1 text-[11px] font-bold rounded-lg ${
-                              ban.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-600'
+                  {list.length === 0 ? (
+                    <p className="text-xs text-stone-400 italic py-2">
+                      Nenhum banner cadastrado nesta posição.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {list.map((ban) => {
+                        const isDraft = ban.status === 'draft';
+                        const lastEditText = formatLastEditedLabel(ban);
+                        return (
+                          <div
+                            key={ban.id}
+                            className={`p-3.5 bg-white rounded-xl border flex flex-col justify-between gap-3 ${
+                              isDraft
+                                ? 'border-amber-200 bg-amber-50/30'
+                                : ban.isActive
+                                ? 'border-stone-200'
+                                : 'border-stone-200 opacity-60 bg-stone-100/50'
                             }`}
                           >
-                            {ban.isActive ? 'Ligado' : 'Desligado'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenBannerModal(ban)}
-                            className="p-1.5 text-stone-500 hover:text-stone-900 rounded-lg hover:bg-stone-100"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              askConfirmation({
-                                title: 'Excluir Banner?',
-                                message: `Deseja excluir o banner "${ban.title}"?`,
-                                isDestructive: true,
-                                onConfirm: () => deleteBanner(ban.id)
-                              })
-                            }
-                            className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-stone-100"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                            <div className="flex items-center gap-3 min-w-0">
+                              <img
+                                src={ban.imageUrl}
+                                alt={ban.title}
+                                className="w-16 h-11 object-cover rounded-lg border border-stone-200 shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span
+                                    className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                      isDraft
+                                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                        : 'bg-emerald-100 text-emerald-800'
+                                    }`}
+                                  >
+                                    {isDraft ? 'Rascunho' : 'Publicado'}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-stone-400">
+                                    Ordem: {ban.order} · {ban.isActive && !isDraft ? 'Ativo' : 'Inativo'}
+                                  </span>
+                                </div>
+                                <h5 className="font-bold text-xs text-stone-900 truncate mt-0.5">{ban.title}</h5>
+                                {lastEditText && (
+                                  <span className="text-[10px] text-stone-400 block truncate">
+                                    {lastEditText}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-stone-100 flex items-center justify-end gap-1.5 flex-wrap">
+                              {isDraft ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateBanner(ban.id, { status: 'published', isActive: true })
+                                  }
+                                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Publicar</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleBannerActive(ban.id)}
+                                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${
+                                    ban.isActive
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-stone-200 text-stone-600'
+                                  }`}
+                                >
+                                  {ban.isActive ? 'Ligado' : 'Desligado'}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenBannerModal(ban)}
+                                className="px-2.5 py-1 text-[11px] font-bold text-[#344E41] rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] flex items-center gap-1"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>Editar</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  askConfirmation({
+                                    title: 'Excluir Banner?',
+                                    message: `Deseja excluir o banner "${ban.title}"?`,
+                                    isDestructive: true,
+                                    onConfirm: () => deleteBanner(ban.id)
+                                  })
+                                }
+                                className="px-2.5 py-1 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 rounded-lg flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Excluir</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
 
@@ -2999,6 +3306,51 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </div>
           </form>
 
+          {/* Box de Convite Pronto (Requirement 7: Copiar mensagem de convite & Enviar pelo WhatsApp) */}
+          {lastInvitedMember && (
+            <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50/90 border border-emerald-200 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-200 text-emerald-950 px-2.5 py-0.5 rounded-full inline-block">
+                    Convite Registrado com Sucesso
+                  </span>
+                  <h4 className="font-bold text-stone-900 text-sm">
+                    Envie o convite para <span className="font-mono text-[#344E41]">{lastInvitedMember.email}</span>
+                  </h4>
+                  <p className="text-xs text-stone-600">
+                    Compartilhe a mensagem pronta abaixo com o link de acesso e as instruções para entrar na equipe:
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLastInvitedMember(null)}
+                  className="p-1 text-stone-400 hover:text-stone-700"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyInviteMessage(lastInvitedMember.email, lastInvitedMember.role)}
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-2 transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar mensagem de convite</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendInviteWhatsApp(lastInvitedMember.email, lastInvitedMember.role)}
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-2 transition-colors"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>Enviar pelo WhatsApp</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* List of Team Members & Pending Invites */}
           <div className="space-y-3">
             <h4 className="font-bold text-xs uppercase tracking-wider text-stone-500">
@@ -3021,7 +3373,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 return (
                   <div
                     key={member.email}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white hover:bg-stone-50/70"
+                    className="p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white hover:bg-stone-50/70"
                   >
                     <div className="flex items-start sm:items-center gap-3 min-w-0">
                       <div
@@ -3070,7 +3422,26 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     </div>
 
                     {!isTitular && (
-                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 self-end lg:self-auto shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyInviteMessage(member.email, member.role)}
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1"
+                          title="Copiar mensagem de convite"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copiar mensagem de convite</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSendInviteWhatsApp(member.email, member.role)}
+                          className="min-h-[36px] px-2.5 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-semibold flex items-center gap-1"
+                          title="Enviar convite pelo WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Enviar pelo WhatsApp</span>
+                        </button>
+
                         <select
                           value={member.role}
                           onChange={(e) =>
@@ -3119,14 +3490,17 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-full inline-block mb-1">
+                  Junta Diaconal — {infoForm.name || activeChurch.name}
+                </span>
                 <h3 className="font-bold text-stone-900 text-lg">Gerenciar Escala da Junta Diaconal</h3>
                 <p className="text-xs text-stone-500">
-                  Subcoleção <code>escalas</code> da igreja. O card de &ldquo;Próximo plantão&rdquo; ignora datas passadas.
+                  As categorias e atalhos abaixo são gerados automaticamente a partir dos Horários de Cultos cadastrados pela igreja (+ Evento especial).
                 </p>
               </div>
 
               <button
-                onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_manha')}
+                onClick={() => handleOpenDeaconModal(undefined, false, dynamicDeaconCategories[0]?.id)}
                 className="min-h-[44px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs flex items-center gap-2 self-start sm:self-auto"
               >
                 <Plus className="w-4 h-4" />
@@ -3136,164 +3510,183 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
 
             <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200/80 space-y-2.5">
               <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500 block">
-                Atalhos Rápidos para Criar Escala por Modalidade:
+                Atalhos Rápidos (a partir dos Horários de Cultos da Igreja):
               </span>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeaconModal(undefined, false, 'semana_oracao')}
-                  className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold"
-                >
-                  + 1ª Semana (Semana de Oração)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeaconModal(undefined, false, 'quinta_estudo')}
-                  className="px-3 py-1.5 rounded-xl bg-[#EAF0EC] hover:bg-[#d8e5dd] text-[#284136] text-xs font-bold"
-                >
-                  + Quinta-feira (Estudo e Oração)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_manha')}
-                  className="px-3 py-1.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-950 text-xs font-bold"
-                >
-                  + Domingo pela Manhã (Culto)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeaconModal(undefined, false, 'domingo_noite')}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-100 hover:bg-indigo-200 text-indigo-950 text-xs font-bold"
-                >
-                  + Domingo à Noite (Culto)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeaconModal(undefined, false, 'evento_especial')}
-                  className="px-3 py-1.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-950 text-xs font-bold"
-                >
-                  + Evento Especial
-                </button>
+                {dynamicDeaconCategories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => handleOpenDeaconModal(undefined, false, cat.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${cat.badgeBg} ${cat.badgeText} hover:opacity-90`}
+                  >
+                    + {cat.shortLabel}
+                  </button>
+                ))}
               </div>
             </div>
 
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-              {[
-                { id: 'ALL', label: 'Todas as Escalas' },
-                { id: 'semana_oracao', label: '1ª Semana (Oração)' },
-                { id: 'quinta_estudo', label: 'Quintas (Estudo/Oração)' },
-                { id: 'domingo_manha', label: 'Domingos (Manhã)' },
-                { id: 'domingo_noite', label: 'Domingos (Noite)' },
-                { id: 'evento_especial', label: 'Eventos Especiais' }
-              ].map((t) => (
+              <button
+                type="button"
+                onClick={() => setDeaconCategoryFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap ${
+                  deaconCategoryFilter === 'ALL'
+                    ? 'bg-[#344E41] text-white'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                Todas as Escalas
+              </button>
+              {dynamicDeaconCategories.map((cat) => (
                 <button
-                  key={t.id}
+                  key={cat.id}
                   type="button"
-                  onClick={() => setDeaconCategoryFilter(t.id as 'ALL' | DeaconScheduleCategory)}
+                  onClick={() => setDeaconCategoryFilter(cat.id)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap ${
-                    deaconCategoryFilter === t.id
+                    deaconCategoryFilter === cat.id
                       ? 'bg-[#344E41] text-white'
                       : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                   }`}
                 >
-                  {t.label}
+                  {cat.shortLabel}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[...deaconSchedules]
-              .filter((item) =>
-                deaconCategoryFilter === 'ALL' ? true : (item.category || 'domingo_noite') === deaconCategoryFilter
-              )
-              .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
-              .map((item) => {
-                const catMeta = CATEGORY_META[item.category || 'domingo_noite'] || CATEGORY_META.domingo_noite;
-                return (
-                  <div
-                    key={item.id}
-                    className={`bg-white rounded-2xl p-5 border border-stone-200 border-l-4 ${catMeta.borderAccent} flex flex-col justify-between gap-4`}
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-stone-100 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${catMeta.badgeBg} ${catMeta.badgeText}`}
-                          >
-                            {catMeta.shortLabel}
-                          </span>
-                          <span className="text-xs font-bold text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-lg">
-                            {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')} · {item.time}
+          {deaconSchedules.length === 0 ? (
+            <div className="bg-white p-10 rounded-3xl border border-stone-200 text-center space-y-3">
+              <ClipboardList className="w-8 h-8 text-stone-300 mx-auto" />
+              <p className="text-sm font-bold text-stone-700">Nenhum item cadastrado ainda</p>
+              <p className="text-xs text-stone-500">
+                Clique no botão abaixo ou use um dos atalhos de culto acima para criar a primeira escala diaconal.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleOpenDeaconModal(undefined, false, dynamicDeaconCategories[0]?.id)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Criar Primeira Escala</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[...deaconSchedules]
+                .filter((item) => {
+                  if (deaconCategoryFilter === 'ALL') return true;
+                  const resolved = getDeaconCategoryMeta(item, infoForm.schedules);
+                  return resolved.id === deaconCategoryFilter;
+                })
+                .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+                .map((item) => {
+                  const catMeta = getDeaconCategoryMeta(item, infoForm.schedules);
+                  const isDraft = item.status === 'draft';
+                  const lastEditText = formatLastEditedLabel(item);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`bg-white rounded-2xl p-5 border border-l-4 ${catMeta.borderAccent} flex flex-col justify-between gap-4 ${
+                        isDraft ? 'border-amber-300 bg-amber-50/20' : 'border-stone-200'
+                      }`}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2 pb-2 border-b border-stone-100 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${catMeta.badgeBg} ${catMeta.badgeText}`}
+                            >
+                              {catMeta.shortLabel}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                                isDraft
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {isDraft ? 'Rascunho' : 'Publicado'}
+                            </span>
+                            <span className="text-xs font-bold text-[#344E41] bg-[#EAF0EC] px-2.5 py-0.5 rounded-lg">
+                              {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')} ·{' '}
+                              {formatTimeStandard(item.time)}
+                            </span>
+                          </div>
+                          <span className="text-xs font-semibold text-stone-600">
+                            Coord.: <strong>{item.coordinator}</strong>
                           </span>
                         </div>
-                        <span className="text-xs font-semibold text-stone-600">
-                          Coord.: <strong>{item.coordinator}</strong>
-                        </span>
-                      </div>
 
-                      <h4 className="font-bold text-stone-900 text-base">{item.serviceName}</h4>
+                        <h4 className="font-bold text-stone-900 text-base">{item.serviceName}</h4>
 
-                      <div className="space-y-1.5 text-xs text-stone-600">
-                        <p>
-                          <strong className="text-stone-800">Recepção/Porta:</strong>{' '}
-                          {item.receptionTeam.join(', ') || '—'}
-                        </p>
-                        <p>
-                          <strong className="text-stone-800">Ofertas/Santa Ceia:</strong>{' '}
-                          {item.offeringAndCommunionTeam.join(', ') || '—'}
-                        </p>
-                        <p>
-                          <strong className="text-stone-800">Pátio/Ordem:</strong>{' '}
-                          {item.parkingAndOrderTeam.join(', ') || '—'}
-                        </p>
-                        {(item.updatedByName || item.createdByName || item.updatedByEmail || item.createdByEmail) && (
-                          <p className="text-[11px] text-stone-400 pt-1">
-                            Publicado/editado por:{' '}
-                            <strong className="text-stone-600">
-                              {item.updatedByName || item.createdByName || item.updatedByEmail || item.createdByEmail}
-                            </strong>
+                        <div className="space-y-1.5 text-xs text-stone-600">
+                          <p>
+                            <strong className="text-stone-800">Recepção/Porta:</strong>{' '}
+                            {item.receptionTeam.join(', ') || '—'}
                           </p>
+                          <p>
+                            <strong className="text-stone-800">Ofertas/Santa Ceia:</strong>{' '}
+                            {item.offeringAndCommunionTeam.join(', ') || '—'}
+                          </p>
+                          <p>
+                            <strong className="text-stone-800">Pátio/Ordem:</strong>{' '}
+                            {item.parkingAndOrderTeam.join(', ') || '—'}
+                          </p>
+                          {lastEditText && (
+                            <p className="text-[11px] text-stone-400 pt-1">{lastEditText}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-stone-100 flex items-center justify-end gap-1.5 flex-wrap">
+                        {isDraft && (
+                          <button
+                            type="button"
+                            onClick={() => updateDeaconSchedule(item.id, { status: 'published' })}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Publicar</span>
+                          </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDeaconModal(item, true)}
+                          className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium flex items-center gap-1"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Duplicar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDeaconModal(item)}
+                          className="px-3 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-semibold flex items-center gap-1"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Editar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            askConfirmation({
+                              title: 'Excluir Escala Diaconal?',
+                              message: `Deseja excluir a escala de "${item.serviceName}"?`,
+                              isDestructive: true,
+                              onConfirm: () => deleteDeaconSchedule(item.id)
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 text-xs font-semibold flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Excluir</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="pt-3 border-t border-stone-100 flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDeaconModal(item, true)}
-                        className="px-3 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium flex items-center gap-1"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Duplicar</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDeaconModal(item)}
-                        className="px-3 py-1.5 rounded-lg bg-[#EAF0EC] hover:bg-[#dbe6df] text-[#344E41] text-xs font-semibold flex items-center gap-1"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        <span>Editar</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          askConfirmation({
-                            title: 'Excluir Escala Diaconal?',
-                            message: `Deseja excluir a escala de "${item.serviceName}"?`,
-                            isDestructive: true,
-                            onConfirm: () => deleteDeaconSchedule(item.id)
-                          })
-                        }
-                        className="p-1.5 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
@@ -3402,9 +3795,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-                <h3 className="font-bold text-stone-900 text-base">
-                  {editingBulletinId ? 'Editar Boletim Semanal' : 'Novo Boletim Semanal'}
-                </h3>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    {editingBulletinId ? 'Editar Boletim Semanal' : 'Novo Boletim Semanal'}
+                  </h3>
+                  {editingBulletinId && formatLastEditedLabel(bulletinForm) && (
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      {formatLastEditedLabel(bulletinForm)}
+                    </p>
+                  )}
+                </div>
                 <button onClick={() => setBulletinModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
                   <X className="w-5 h-5" />
                 </button>
@@ -3545,11 +3945,11 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     className="rounded text-[#344E41]"
                   />
                   <label htmlFor="chkCurrent" className="text-xs font-bold text-stone-700">
-                    Definir este boletim como a edição atual em destaque
+                    Definir este boletim como a edição atual em destaque (ao publicar)
                   </label>
                 </div>
 
-                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                <div className="pt-3 border-t border-stone-200 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setBulletinModalOpen(false)}
@@ -3558,10 +3958,18 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     Cancelar
                   </button>
                   <button
-                    type="submit"
-                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                    type="button"
+                    onClick={() => handleSaveBulletinWithStatus('draft')}
+                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl"
                   >
-                    Salvar Boletim
+                    Salvar rascunho
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveBulletinWithStatus('published')}
+                    className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                  >
+                    Publicar
                   </button>
                 </div>
               </form>
@@ -3577,9 +3985,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-lg max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-                <h3 className="font-bold text-stone-900 text-base">
-                  {editingBirthdayId ? 'Editar Aniversariante' : 'Cadastrar Aniversariante'}
-                </h3>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    {editingBirthdayId ? 'Editar Aniversariante' : 'Cadastrar Aniversariante'}
+                  </h3>
+                  {editingBirthdayId && formatLastEditedLabel(birthdayForm) && (
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      {formatLastEditedLabel(birthdayForm)}
+                    </p>
+                  )}
+                </div>
                 <button onClick={() => setBirthdayModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
                   <X className="w-5 h-5" />
                 </button>
@@ -3773,9 +4188,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-lg max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-                <h3 className="font-bold text-stone-900 text-base">
-                  {editingBannerId ? 'Editar Banner' : 'Novo Banner de Divulgação'}
-                </h3>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    {editingBannerId ? 'Editar Banner' : 'Novo Banner de Divulgação'}
+                  </h3>
+                  {editingBannerId && formatLastEditedLabel(bannerForm) && (
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      {formatLastEditedLabel(bannerForm)}
+                    </p>
+                  )}
+                </div>
                 <button onClick={() => setBannerModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
                   <X className="w-5 h-5" />
                 </button>
@@ -3858,7 +4280,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   />
                 </div>
 
-                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                <div className="pt-3 border-t border-stone-200 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setBannerModalOpen(false)}
@@ -3867,10 +4289,18 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     Cancelar
                   </button>
                   <button
-                    type="submit"
-                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] rounded-xl"
+                    type="button"
+                    onClick={() => handleSaveBannerWithStatus('draft')}
+                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl"
                   >
-                    Salvar Banner
+                    Salvar rascunho
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveBannerWithStatus('published')}
+                    className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                  >
+                    Publicar
                   </button>
                 </div>
               </form>
@@ -3886,9 +4316,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-stone-900/65 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white rounded-3xl w-full max-w-xl max-h-[90vh] shadow-2xl border border-stone-200 flex flex-col overflow-hidden my-auto">
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
-                <h3 className="font-bold text-stone-900 text-base">
-                  {editingDeaconId ? 'Editar Escala de Diáconos' : 'Nova Escala de Diáconos'}
-                </h3>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">
+                    {editingDeaconId ? 'Editar Escala de Diáconos' : 'Nova Escala de Diáconos'}
+                  </h3>
+                  {editingDeaconId && formatLastEditedLabel(deaconForm) && (
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      {formatLastEditedLabel(deaconForm)}
+                    </p>
+                  )}
+                </div>
                 <button onClick={() => setDeaconModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
                   <X className="w-5 h-5" />
                 </button>
@@ -3896,17 +4333,19 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
 
               <form onSubmit={handleSaveDeaconSchedule} className="p-5 overflow-y-auto space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Modalidade da Escala</label>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Culto / Modalidade (baseado nos Horários de Cultos da Igreja)
+                  </label>
                   <select
-                    value={deaconForm.category || 'domingo_manha'}
+                    value={deaconForm.category || dynamicDeaconCategories[0]?.id || 'evento_especial'}
                     onChange={(e) => handleSelectDeaconCategoryInModal(e.target.value as DeaconScheduleCategory)}
                     className="w-full p-2.5 text-xs rounded-xl border border-stone-300 bg-white font-semibold"
                   >
-                    <option value="semana_oracao">1ª Semana do Mês — Semana de Oração</option>
-                    <option value="quinta_estudo">Quinta-feira — Culto de Estudo e Oração</option>
-                    <option value="domingo_manha">Domingo pela Manhã — Culto Matutino</option>
-                    <option value="domingo_noite">Domingo à Noite — Culto Noturno</option>
-                    <option value="evento_especial">Evento Especial</option>
+                    {dynamicDeaconCategories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -3922,14 +4361,23 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-stone-700 mb-1">Horário</label>
-                    <input
-                      type="text"
-                      required
-                      value={deaconForm.time}
-                      onChange={(e) => setDeaconForm({ ...deaconForm, time: e.target.value })}
-                      className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
-                    />
+                    <label className="block text-xs font-bold text-stone-700 mb-1">
+                      Horário Padronizado ({formatTimeStandard(deaconForm.time || '19h30')})
+                    </label>
+                    <div className="flex items-center gap-2 rounded-xl border border-stone-300 bg-white px-2.5">
+                      <input
+                        type="time"
+                        required
+                        value={standardTimeToHtmlTime(deaconForm.time || '19h30')}
+                        onChange={(e) =>
+                          setDeaconForm({ ...deaconForm, time: formatTimeStandard(e.target.value) })
+                        }
+                        className="w-full py-2 text-xs bg-transparent focus:outline-none"
+                      />
+                      <span className="text-[11px] font-mono font-bold text-[#344E41] bg-[#EAF0EC] px-2 py-0.5 rounded shrink-0">
+                        {formatTimeStandard(deaconForm.time || '19h30')}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -4002,7 +4450,19 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   />
                 </div>
 
-                <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 mb-1">
+                    Observações (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={deaconForm.notes || ''}
+                    onChange={(e) => setDeaconForm({ ...deaconForm, notes: e.target.value })}
+                    className="w-full p-2.5 text-xs rounded-xl border border-stone-300"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-stone-200 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setDeaconModalOpen(false)}
@@ -4011,10 +4471,18 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     Cancelar
                   </button>
                   <button
-                    type="submit"
-                    className="px-5 py-2 text-xs font-semibold text-white bg-[#344E41] rounded-xl"
+                    type="button"
+                    onClick={() => handleSaveDeaconScheduleWithStatus('draft')}
+                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl"
                   >
-                    Salvar Escala
+                    Salvar rascunho
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveDeaconScheduleWithStatus('published')}
+                    className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                  >
+                    Publicar
                   </button>
                 </div>
               </form>

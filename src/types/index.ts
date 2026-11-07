@@ -13,12 +13,8 @@ export type UserRole = 'owner' | 'gestor' | 'membro';
 export type TeamRole = 'admin' | 'editor';
 export type ChurchStatus = 'ativa' | 'bloqueada' | 'pendente';
 
-export type DeaconScheduleCategory =
-  | 'semana_oracao'
-  | 'quinta_estudo'
-  | 'domingo_manha'
-  | 'domingo_noite'
-  | 'evento_especial';
+export type DeaconScheduleCategory = string;
+export type PublicationStatus = 'draft' | 'published';
 
 export type BannerPosition = 'topo' | 'meio' | 'rodape';
 
@@ -50,6 +46,7 @@ export interface PlatformUser {
 export interface PlatformSettings {
   appName: string;
   tagline: string;
+  isPlatformBrandConfirmed?: boolean;
   updatedAt?: unknown;
 }
 
@@ -78,6 +75,7 @@ export interface ChurchRegistry {
 export interface PublicationAuditFields {
   createdByName?: string;
   createdByEmail?: string;
+  createdAt?: string;
   updatedByName?: string;
   updatedByEmail?: string;
   updatedAt?: string;
@@ -152,6 +150,7 @@ export interface Bulletin extends PublicationAuditFields {
   editionDate: string; // YYYY-MM-DD
   summary: string;
   isCurrent: boolean;
+  status?: PublicationStatus;
   type: 'pdf' | 'text';
   pdfUrl?: string;
   pdfFileName?: string;
@@ -176,6 +175,7 @@ export interface BirthdayPerson extends PublicationAuditFields {
 export interface DeaconScheduleItem extends PublicationAuditFields {
   id: string;
   category: DeaconScheduleCategory;
+  status?: PublicationStatus;
   date: string; // YYYY-MM-DD
   serviceName: string;
   time: string;
@@ -191,6 +191,7 @@ export interface Banner extends PublicationAuditFields {
   id: string;
   title: string;
   position: BannerPosition;
+  status?: PublicationStatus;
   imageUrl: string;
   linkUrl: string;
   openInNewTab: boolean;

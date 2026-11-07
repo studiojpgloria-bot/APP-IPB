@@ -55,12 +55,17 @@ export const Navbar: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const rawPlatformName = (platformSettings.appName || 'Minha Igreja').trim();
+  const isSameAsActiveChurch =
+    Boolean(activeChurch?.name) &&
+    rawPlatformName.toLowerCase() === activeChurch!.name.trim().toLowerCase();
+  const platformBrand = !rawPlatformName || isSameAsActiveChurch ? 'Minha Igreja' : rawPlatformName;
+
   // ============================================================================
   // MODO 1: CABEÇALHO DA PLATAFORMA (Portal do Gestor, /admin ou Bíblia avulsa)
-  // Sem menu de igreja e sem nome de igreja visitada anteriormente
+  // Sem menu de igreja, sem nome de igreja visitada anteriormente e sem botões duplicados
   // ============================================================================
   if (isPlatformHeaderMode) {
-    const platformName = platformSettings.appName || 'Minha Igreja';
     const subtitle =
       currentView === 'manager'
         ? 'Portal do Gestor'
@@ -82,7 +87,7 @@ export const Navbar: React.FC = () => {
             </div>
             <div className="flex flex-col min-w-0">
               <span className="font-serif font-bold text-stone-900 tracking-tight text-sm sm:text-base leading-tight truncate">
-                {platformName}
+                {platformBrand}
               </span>
               <span className="text-[11px] text-[#344E41] font-semibold truncate">
                 {subtitle}
@@ -90,22 +95,9 @@ export const Navbar: React.FC = () => {
             </div>
           </button>
 
-          {/* Platform Header Actions (No Church Menu) */}
+          {/* Platform Header Actions (Sem duplicar "Admin", "Ver Igreja" ou "Sair" do Painel) */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <PWAInstallButton />
-
-            {activeChurch && currentView === 'manager' && (
-              <button
-                type="button"
-                onClick={() => handleNav('home')}
-                className="min-h-[38px] px-3 py-1.5 rounded-xl bg-[#EAF0EC] hover:bg-[#dce6df] text-[#344E41] text-xs font-bold flex items-center gap-1.5 transition-colors"
-                title={`Abrir página pública da ${activeChurch.name}`}
-              >
-                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline">Ver Página da Igreja</span>
-                <span className="sm:hidden">Ver Igreja</span>
-              </button>
-            )}
 
             <button
               type="button"
@@ -116,29 +108,6 @@ export const Navbar: React.FC = () => {
               <span className="hidden sm:inline">Tela Inicial (/)</span>
               <span className="sm:hidden">Início</span>
             </button>
-
-            {isPlatformOwner && currentView !== 'admin' && (
-              <button
-                type="button"
-                onClick={() => handleNav('admin')}
-                className="min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 flex items-center gap-1"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-[#344E41]" />
-                <span>Admin</span>
-              </button>
-            )}
-
-            {firebaseUser && (
-              <button
-                type="button"
-                onClick={managerLogout}
-                title="Sair da conta"
-                className="min-h-[38px] px-2.5 py-1.5 rounded-xl text-xs font-semibold text-stone-500 hover:text-rose-600 hover:bg-rose-50 flex items-center gap-1 transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline">Sair</span>
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -150,7 +119,7 @@ export const Navbar: React.FC = () => {
   // Mostra sempre o nome e o logo da igreja ativa
   // ============================================================================
   const themeColor = activeChurch.themeColor || '#344E41';
-  const churchDisplayName = activeChurch.name || churchInfo.name || platformSettings.appName || 'Minha Igreja';
+  const churchDisplayName = activeChurch.name || churchInfo.name || platformBrand;
   const churchDisplayLogo = activeChurch.logoUrl || churchInfo.logoUrl;
 
   return (
@@ -179,7 +148,7 @@ export const Navbar: React.FC = () => {
               <span className="text-[11px] text-stone-500 font-medium truncate">
                 {activeChurch.city && activeChurch.state
                   ? `${activeChurch.city} / ${activeChurch.state}`
-                  : churchInfo.tagline || platformSettings.appName || 'Minha Igreja'}
+                  : churchInfo.tagline || platformBrand}
               </span>
             </div>
           </button>
@@ -205,7 +174,7 @@ export const Navbar: React.FC = () => {
             })}
           </nav>
 
-          {/* Right Actions: Switch Church + Manager + Drawer Menu */}
+          {/* Right Actions: Switch Church + Manager/Owner (ONLY if authorized) + Drawer Menu */}
           <div className="flex items-center gap-1.5 shrink-0">
             <div className="hidden lg:flex items-center gap-1">
               <PWAInstallButton />
@@ -230,7 +199,7 @@ export const Navbar: React.FC = () => {
                 </button>
               )}
 
-              {isManagerAuthenticated ? (
+              {isManagerAuthenticated && (
                 <div className="flex items-center gap-1 pl-1.5 ml-1 border-l border-stone-200">
                   <button
                     onClick={() => handleNav('manager')}
@@ -247,14 +216,6 @@ export const Navbar: React.FC = () => {
                     <LogOut className="w-4 h-4" />
                   </button>
                 </div>
-              ) : (
-                <button
-                  onClick={() => handleNav('manager')}
-                  className="min-h-[38px] px-2.5 py-1.5 ml-1 text-xs text-stone-400 hover:text-stone-700 transition-colors"
-                  title="Acesso restrito para líderes"
-                >
-                  <span>Gestor</span>
-                </button>
               )}
             </div>
 
@@ -376,41 +337,39 @@ export const Navbar: React.FC = () => {
                     </button>
                   )}
 
-                  <button
-                    onClick={() => handleNav('manager')}
-                    className={`w-full min-h-[44px] px-3 py-2 text-xs font-medium rounded-xl flex items-center justify-between ${
-                      isManagerAuthenticated
-                        ? 'bg-amber-50 text-amber-900 border border-amber-200'
-                        : 'text-stone-500 hover:bg-stone-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-[#344E41]" />
-                      <span>{isManagerAuthenticated ? 'Painel do Gestor (Ativo)' : 'Portal do Gestor'}</span>
-                    </div>
-                    {isManagerAuthenticated && (
-                      <span className="text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">Logado</span>
-                    )}
-                  </button>
-
                   {isManagerAuthenticated && (
-                    <button
-                      onClick={() => {
-                        managerLogout();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="w-full min-h-[44px] px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-xl flex items-center gap-2 font-medium"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sair da Sessão</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleNav('manager')}
+                        className="w-full min-h-[44px] px-3 py-2 text-xs font-medium rounded-xl flex items-center justify-between bg-amber-50 text-amber-900 border border-amber-200"
+                      >
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-[#344E41]" />
+                          <span>Painel do Gestor (Ativo)</span>
+                        </div>
+                        <span className="text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">
+                          Logado
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          managerLogout();
+                          setMobileMenuOpen(false);
+                        }}
+                        className="w-full min-h-[44px] px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-xl flex items-center gap-2 font-medium"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Sair da Sessão</span>
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
 
               <div className="pt-4 border-t border-stone-100 text-center text-xs text-stone-400">
                 <span>
-                  {churchDisplayName} — {platformSettings.appName || 'Minha Igreja'}
+                  {churchDisplayName} — {platformBrand}
                 </span>
               </div>
             </div>

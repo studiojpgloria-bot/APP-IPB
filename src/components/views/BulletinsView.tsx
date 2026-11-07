@@ -13,8 +13,11 @@ export const BulletinsView: React.FC = () => {
   const { bulletins, setSelectedBulletinForReader, isMobileAppPreview } = useChurch();
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Only show published bulletins to public members
+  const publishedBulletins = bulletins.filter((b) => b.status !== 'draft');
+
   // Sort by edition date descending
-  const sortedBulletins = [...bulletins].sort((a, b) => {
+  const sortedBulletins = [...publishedBulletins].sort((a, b) => {
     return new Date(b.editionDate).getTime() - new Date(a.editionDate).getTime();
   });
 
@@ -28,7 +31,7 @@ export const BulletinsView: React.FC = () => {
     );
   });
 
-  const currentBulletin = bulletins.find((b) => b.isCurrent) || sortedBulletins[0];
+  const currentBulletin = publishedBulletins.find((b) => b.isCurrent) || sortedBulletins[0];
 
   return (
     <div className="space-y-6 pb-8">
@@ -130,7 +133,9 @@ export const BulletinsView: React.FC = () => {
 
         {filteredBulletins.length === 0 ? (
           <div className="bg-white p-12 text-center rounded-2xl border border-stone-200 text-stone-500">
-            Nenhum boletim encontrado para sua busca.
+            {publishedBulletins.length === 0 || !searchQuery.trim()
+              ? 'Nenhum boletim publicado ainda'
+              : 'Nenhum boletim encontrado para sua busca.'}
           </div>
         ) : (
           <div className={`grid gap-4 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>

@@ -15,9 +15,12 @@ import {
   Youtube
 } from 'lucide-react';
 import { useChurch } from '../../context/ChurchContext';
+import { formatTimeStandard } from '../../services/cloudDatabase';
 
 export const ChurchInfoView: React.FC = () => {
-  const { churchInfo, isMobileAppPreview, setCurrentView } = useChurch();
+  const { churchInfo, activeChurch, isManagerAuthenticated, isMobileAppPreview, setCurrentView } = useChurch();
+
+  const displayChurchName = churchInfo.name || activeChurch?.name || 'Nossa Igreja';
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-8">
@@ -33,7 +36,7 @@ export const ChurchInfoView: React.FC = () => {
           <div className="flex items-start gap-4">
             {churchInfo.logoUrl ? (
               <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-[#344E41] border border-stone-200 shadow-xs shrink-0">
-                <img src={churchInfo.logoUrl} alt={churchInfo.name} className="w-full h-full object-cover" />
+                <img src={churchInfo.logoUrl} alt={displayChurchName} className="w-full h-full object-cover" />
               </div>
             ) : null}
             <div className="space-y-1.5 max-w-2xl min-w-0">
@@ -41,10 +44,13 @@ export const ChurchInfoView: React.FC = () => {
                 Sobre a Nossa Comunidade
               </span>
               <h1 className="text-xl sm:text-4xl font-serif font-bold text-stone-900 tracking-tight leading-snug">
-                {churchInfo.name || 'Informações da Igreja'}
+                {displayChurchName}
               </h1>
               <p className="text-stone-600 text-xs sm:text-base leading-relaxed">
-                {churchInfo.tagline || 'Configure o nome, história, cultos e liderança na Área do Gestor.'}
+                {churchInfo.tagline ||
+                  (isManagerAuthenticated
+                    ? 'Configure o nome, história, cultos e liderança na Área do Gestor.'
+                    : 'Seja bem-vindo! Junte-se a nós para adorar a Deus.')}
               </p>
             </div>
           </div>
@@ -72,7 +78,7 @@ export const ChurchInfoView: React.FC = () => {
                 <span>Como Chegar</span>
               </a>
             )}
-            {!churchInfo.name && (
+            {isManagerAuthenticated && !churchInfo.tagline && (
               <button
                 onClick={() => setCurrentView('manager')}
                 className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs sm:text-sm flex items-center gap-2 shadow-xs transition-colors"
@@ -85,41 +91,47 @@ export const ChurchInfoView: React.FC = () => {
       </section>
 
       {/* 2. História & Missão */}
-      <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
-        {/* História */}
-        <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center">
-            <Church className="w-5 h-5" />
-          </div>
-          <h2 className="text-lg font-bold text-stone-900 tracking-tight">Nossa História & Raízes</h2>
-          {churchInfo.aboutHistory ? (
-            <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
-              {churchInfo.aboutHistory}
-            </p>
-          ) : (
-            <p className="text-xs text-stone-400 italic">
-              Nenhuma descrição histórica cadastrada ainda. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
-            </p>
+      {(churchInfo.aboutHistory || churchInfo.missionVision || isManagerAuthenticated) && (
+        <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+          {/* História */}
+          {(churchInfo.aboutHistory || isManagerAuthenticated) && (
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center">
+                <Church className="w-5 h-5" />
+              </div>
+              <h2 className="text-lg font-bold text-stone-900 tracking-tight">Nossa História & Raízes</h2>
+              {churchInfo.aboutHistory ? (
+                <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
+                  {churchInfo.aboutHistory}
+                </p>
+              ) : (
+                <p className="text-xs text-stone-400 italic">
+                  Nenhuma descrição histórica cadastrada ainda. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
+                </p>
+              )}
+            </section>
           )}
-        </section>
 
-        {/* Missão e Visão */}
-        <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#B08938] flex items-center justify-center">
-            <Heart className="w-5 h-5" />
-          </div>
-          <h2 className="text-lg font-bold text-stone-900 tracking-tight">Missão & Declaração de Fé</h2>
-          {churchInfo.missionVision ? (
-            <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
-              {churchInfo.missionVision}
-            </p>
-          ) : (
-            <p className="text-xs text-stone-400 italic">
-              Missão e declaração de fé ainda não configuradas.
-            </p>
+          {/* Missão e Visão */}
+          {(churchInfo.missionVision || isManagerAuthenticated) && (
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#B08938] flex items-center justify-center">
+                <Heart className="w-5 h-5" />
+              </div>
+              <h2 className="text-lg font-bold text-stone-900 tracking-tight">Missão & Declaração de Fé</h2>
+              {churchInfo.missionVision ? (
+                <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
+                  {churchInfo.missionVision}
+                </p>
+              ) : (
+                <p className="text-xs text-stone-400 italic">
+                  Missão e declaração de fé ainda não configuradas.
+                </p>
+              )}
+            </section>
           )}
-        </section>
-      </div>
+        </div>
+      )}
 
       {/* 3. Horários de Cultos e Programação Semanal */}
       <section className="bg-white rounded-2xl p-5 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
@@ -147,7 +159,9 @@ export const ChurchInfoView: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between text-xs font-bold text-[#344E41] mb-1">
                     <span>{sch.day}</span>
-                    <span className="bg-[#EAF0EC] px-2 py-0.5 rounded-md font-mono">{sch.time}</span>
+                    <span className="bg-[#EAF0EC] px-2 py-0.5 rounded-md font-mono">
+                      {formatTimeStandard(sch.time)}
+                    </span>
                   </div>
                   <h3 className="font-bold text-stone-900 text-sm leading-snug">{sch.title}</h3>
                   <p className="text-xs text-stone-600 mt-1 leading-relaxed">{sch.description}</p>
@@ -164,73 +178,75 @@ export const ChurchInfoView: React.FC = () => {
           </div>
         ) : (
           <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200/70 text-center text-xs text-stone-500">
-            Nenhum horário de culto cadastrado no momento.
+            Em breve divulgaremos os horários de cultos e reuniões semanais.
           </div>
         )}
       </section>
 
       {/* 4. Liderança Pastoral & Conselho */}
-      <section className="bg-white rounded-2xl p-5 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
-        <div className="flex items-center gap-2 pb-3 border-b border-stone-100">
-          <Users className="w-5 h-5 text-[#344E41] shrink-0" />
-          <div>
-            <h2 className="text-lg font-bold text-stone-900 tracking-tight">
-              Liderança & Pastores
-            </h2>
-            <p className="text-xs text-stone-500">Homens e mulheres dedicados ao pastoreio e serviço do Reino</p>
+      {(churchInfo.leadership.length > 0 || isManagerAuthenticated) && (
+        <section className="bg-white rounded-2xl p-5 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
+          <div className="flex items-center gap-2 pb-3 border-b border-stone-100">
+            <Users className="w-5 h-5 text-[#344E41] shrink-0" />
+            <div>
+              <h2 className="text-lg font-bold text-stone-900 tracking-tight">
+                Liderança & Pastores
+              </h2>
+              <p className="text-xs text-stone-500">Homens e mulheres dedicados ao pastoreio e serviço do Reino</p>
+            </div>
           </div>
-        </div>
 
-        {churchInfo.leadership.length > 0 ? (
-          <div
-            className={`grid gap-4 ${
-              isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-            }`}
-          >
-            {churchInfo.leadership.map((leader) => (
-              <div
-                key={leader.id}
-                className="bg-stone-50/50 rounded-2xl p-4 border border-stone-200/70 text-center space-y-3 flex flex-col items-center"
-              >
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden shadow-xs border-2 border-white">
-                  <img
-                    src={
-                      leader.photoUrl ||
-                      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
-                    }
-                    alt={leader.name}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                <div>
-                  <h3 className="font-bold text-stone-900 text-sm">{leader.name}</h3>
-                  <span className="text-xs font-semibold text-[#4A6B5D] block mt-0.5">
-                    {leader.role}
-                  </span>
-                </div>
-
-                {leader.bio && (
-                  <p className="text-xs text-stone-600 leading-relaxed line-clamp-3">
-                    {leader.bio}
-                  </p>
-                )}
-
-                {(leader.email || leader.phone) && (
-                  <div className="pt-2 text-[11px] text-stone-500 space-y-1">
-                    {leader.phone && <p>{leader.phone}</p>}
-                    {leader.email && <p className="truncate max-w-[180px]">{leader.email}</p>}
+          {churchInfo.leadership.length > 0 ? (
+            <div
+              className={`grid gap-4 ${
+                isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+              }`}
+            >
+              {churchInfo.leadership.map((leader) => (
+                <div
+                  key={leader.id}
+                  className="bg-stone-50/50 rounded-2xl p-4 border border-stone-200/70 text-center space-y-3 flex flex-col items-center"
+                >
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden shadow-xs border-2 border-white">
+                    <img
+                      src={
+                        leader.photoUrl ||
+                        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
+                      }
+                      alt={leader.name}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200/70 text-center text-xs text-stone-500">
-            Nenhum líder ou pastor cadastrado no momento.
-          </div>
-        )}
-      </section>
+
+                  <div>
+                    <h3 className="font-bold text-stone-900 text-sm">{leader.name}</h3>
+                    <span className="text-xs font-semibold text-[#4A6B5D] block mt-0.5">
+                      {leader.role}
+                    </span>
+                  </div>
+
+                  {leader.bio && (
+                    <p className="text-xs text-stone-600 leading-relaxed line-clamp-3">
+                      {leader.bio}
+                    </p>
+                  )}
+
+                  {(leader.email || leader.phone) && (
+                    <div className="pt-2 text-[11px] text-stone-500 space-y-1">
+                      {leader.phone && <p>{leader.phone}</p>}
+                      {leader.email && <p className="truncate max-w-[180px]">{leader.email}</p>}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200/70 text-center text-xs text-stone-500">
+              Nenhum líder ou pastor cadastrado no momento.
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 5. Endereço, Telefones, Redes Sociais e Mapa */}
       <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-3'}`}>
