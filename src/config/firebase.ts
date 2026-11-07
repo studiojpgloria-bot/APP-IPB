@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import { doc, getDocFromServer, getFirestore, initializeFirestore } from 'firebase/firestore';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
 
 export const activeFirebaseConfig = {
@@ -15,7 +15,19 @@ export const activeFirebaseConfig = {
 
 const app = initializeApp(activeFirebaseConfig);
 
-export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
+function createFirestoreInstance() {
+  try {
+    return initializeFirestore(
+      app,
+      { ignoreUndefinedProperties: true },
+      activeFirebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

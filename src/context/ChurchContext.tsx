@@ -6,6 +6,7 @@ import { BibleApiService } from '../services/bibleApi';
 import {
   CloudChurchService,
   isPlatformOwnerEmail,
+  setFirestoreErrorListener,
   slugifyChurchName
 } from '../services/cloudDatabase';
 import {
@@ -102,6 +103,7 @@ interface ChurchContextType {
     longitude?: number;
   }) => Promise<void>;
   inviteTeamMemberByEmail: (email: string, role: TeamRole) => Promise<void>;
+  resendTeamInviteEmail: (email: string) => Promise<void>;
   updateTeamMemberRoleByEmail: (email: string, role: TeamRole) => Promise<void>;
   inviteCoManagerByEmail: (email: string) => Promise<void>;
   removeCoManagerEmail: (email: string) => Promise<void>;
@@ -209,7 +211,7 @@ interface ChurchContextType {
 const ChurchContext = createContext<ChurchContextType | undefined>(undefined);
 
 function parseUrlRoute(pathname: string): {
-  mode: 'directory' | 'admin' | 'church' | 'manager';
+  mode: 'directory' | 'admin' | 'invite' | 'church' | 'manager';
   slug?: string;
 } {
   const clean = pathname.replace(/^\/+|\/+$/g, '');
@@ -218,6 +220,9 @@ function parseUrlRoute(pathname: string): {
   }
   if (clean === 'admin') {
     return { mode: 'admin' };
+  }
+  if (clean === 'convite') {
+    return { mode: 'invite' };
   }
   if (clean === 'gestor') {
     return { mode: 'manager' };
@@ -251,6 +256,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [currentView, setCurrentViewState] = useState<ViewMode>(() => {
     if (initialRoute.mode === 'admin') return 'admin';
+    if (initialRoute.mode === 'invite') return 'invite';
     if (initialRoute.mode === 'manager') return 'manager';
     if (initialRoute.mode === 'church') return 'home';
     if (savedSlugOnBoot) return 'home';
@@ -460,8 +466,13 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4200);
+    }, 4500);
   };
+
+  useEffect(() => {
+    setFirestoreErrorListener((msg) => showToast(msg, 'error'));
+    return () => setFirestoreErrorListener(null);
+  }, []);
 
   const askConfirmation = (config: Omit<ConfirmDialogState, 'isOpen'>) => {
     setConfirmDialog({ ...config, isOpen: true });
@@ -481,6 +492,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       targetPath = '/';
     } else if (view === 'admin') {
       targetPath = '/admin';
+    } else if (view === 'invite') {
+      targetPath = `/convite${window.location.search || ''}`;
     } else if (view === 'manager') {
       targetPath = slug ? `/${slug}/gestor` : '/gestor';
     } else if (slug) {
@@ -488,7 +501,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } else {
       targetPath = '/';
     }
-    if (window.location.pathname !== targetPath) {
+    if (`${window.location.pathname}${view === 'invite' ? window.location.search : ''}` !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
   };
@@ -496,7 +509,11 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Requirement 1: Dynamic church theme color & exact document.title per screen
   useEffect(() => {
     const isPlatformScreen =
-      currentView === 'directory' || currentView === 'admin' || currentView === 'manager' || !activeChurch;
+      currentView === 'directory' ||
+      currentView === 'admin' ||
+      currentView === 'invite' ||
+      currentView === 'manager' ||
+      !activeChurch;
     const color = isPlatformScreen ? '#344E41' : activeChurch?.themeColor || '#344E41';
     const rawPlatformName = (platformSettings.appName || 'Minha Igreja').trim();
     const isSameAsChurch =
@@ -511,6 +528,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         document.title = platformBrand;
       } else if (currentView === 'admin') {
         document.title = `Administração — ${platformBrand}`;
+      } else if (currentView === 'invite') {
+        document.title = `Aceitar Convite da Equipe — ${platformBrand}`;
       } else if (currentView === 'manager') {
         document.title = `Portal do Gestor — ${platformBrand}`;
       } else if (activeChurch?.name || churchInfo.name) {
@@ -546,6 +565,12 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (route.mode === 'admin') {
         setIsChurchLoading(false);
         setCurrentViewState('admin');
+        return;
+      }
+
+      if (route.mode === 'invite') {
+        setIsChurchLoading(false);
+        setCurrentViewState('invite');
         return;
       }
 
@@ -617,6 +642,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (r.mode === 'admin') {
         setIsChurchLoading(false);
         setCurrentViewState('admin');
+      } else if (r.mode === 'invite') {
+        setIsChurchLoading(false);
+        setCurrentViewState('invite');
       } else if (r.mode === 'directory') {
         setIsChurchLoading(false);
         setActiveChurch(null);
@@ -735,7 +763,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     return () => unsub();
-  }, [activeChurch?.id]);
+  }, [activeChurch?.id, firebaseUser?.uid]);
 
   // 4. Listen to Firebase Auth State, `users/{uid}`, and `managedChurches`
   useEffect(() => {
@@ -1073,13 +1101,56 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       showToast('Apenas Administradores podem gerenciar a equipe.', 'error');
       return;
     }
+    const cleanEmail = email.toLowerCase().trim();
     const actor = getAuditActor();
-    await CloudChurchService.inviteTeamMember(activeChurch.id, email, role, actor.email);
-    showToast(
-      `Convite enviado para ${email.toLowerCase().trim()} como ${
-        role === 'admin' ? 'Administrador' : 'Editor'
-      }!`
+    try {
+      const { emailSent } = await CloudChurchService.inviteTeamMember(
+        activeChurch.id,
+        cleanEmail,
+        role,
+        actor.email
+      );
+      const roleLabel = role === 'admin' ? 'Administrador' : 'Editor';
+      if (emailSent) {
+        showToast(
+          `Convite salvo e link de acesso enviado por e-mail para ${cleanEmail} (${roleLabel})!`
+        );
+      } else {
+        showToast(
+          `Convite salvo para ${cleanEmail} (${roleLabel})! Use "Copiar link" ou "Enviar pelo WhatsApp" (ou ative "Link do e-mail" no Firebase Auth).`,
+          'info'
+        );
+      }
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : 'Erro ao gravar o convite da equipe no Firestore.',
+        'error'
+      );
+      throw e;
+    }
+  };
+
+  const resendTeamInviteEmail = async (email: string) => {
+    if (!activeChurch || !isChurchAdmin) {
+      showToast('Apenas Administradores podem reenviar convites.', 'error');
+      return;
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const { emailSent, emailError } = await CloudChurchService.sendSignInInviteEmailLink(
+      activeChurch.id,
+      activeChurch.slug,
+      cleanEmail
     );
+    if (emailSent) {
+      showToast(`Link de login enviado por e-mail para ${cleanEmail}!`);
+    } else {
+      showToast(
+        `Não foi possível enviar o e-mail automático (${
+          emailError || 'verifique se "Link do e-mail" está ativo no Firebase Console'
+        }). Use "Copiar link" ou "Enviar pelo WhatsApp".`,
+        'error'
+      );
+    }
   };
 
   const updateTeamMemberRoleByEmail = async (email: string, role: TeamRole) => {
@@ -1108,7 +1179,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     try {
       await CloudChurchService.removeManagerEmailFromChurch(activeChurch.id, email);
-      showToast(`Membro ${email} removido da equipe.`, 'info');
+      showToast(`Convite / acesso de ${email} cancelado e removido da equipe.`, 'info');
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Erro ao remover membro.', 'error');
     }
@@ -2006,6 +2077,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         createNewChurchInCloud,
         updateChurchSlugAndMeta,
         inviteTeamMemberByEmail,
+        resendTeamInviteEmail,
         updateTeamMemberRoleByEmail,
         inviteCoManagerByEmail,
         removeCoManagerEmail,

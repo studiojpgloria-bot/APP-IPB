@@ -38,7 +38,10 @@ export const Navbar: React.FC = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isPlatformHeaderMode =
-    currentView === 'manager' || currentView === 'admin' || !activeChurch;
+    currentView === 'manager' ||
+    currentView === 'admin' ||
+    currentView === 'invite' ||
+    !activeChurch;
 
   const navItems: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
     { id: 'home', label: 'Início', icon: <Home className="w-4 h-4" /> },
@@ -62,7 +65,7 @@ export const Navbar: React.FC = () => {
   const platformBrand = !rawPlatformName || isSameAsActiveChurch ? 'Minha Igreja' : rawPlatformName;
 
   // ============================================================================
-  // MODO 1: CABEÇALHO DA PLATAFORMA (Portal do Gestor, /admin ou Bíblia avulsa)
+  // MODO 1: CABEÇALHO DA PLATAFORMA (Portal do Gestor, /admin, /convite ou Bíblia avulsa)
   // Sem menu de igreja, sem nome de igreja visitada anteriormente e sem botões duplicados
   // ============================================================================
   if (isPlatformHeaderMode) {
@@ -71,6 +74,8 @@ export const Navbar: React.FC = () => {
         ? 'Portal do Gestor'
         : currentView === 'admin'
         ? 'Administração da Plataforma (/admin)'
+        : currentView === 'invite'
+        ? 'Convite de Equipe (/convite)'
         : platformSettings.tagline || 'Plataforma Digital Multi-Igreja';
 
     return (

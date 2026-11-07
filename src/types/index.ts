@@ -1,6 +1,7 @@
 export type ViewMode =
   | 'directory'
   | 'admin'
+  | 'invite'
   | 'home'
   | 'bible'
   | 'bulletins'
@@ -28,6 +29,24 @@ export interface ChurchTeamMember {
   status: 'active' | 'pending';
   invitedAt: string;
   invitedBy?: string;
+  emailSent?: boolean;
+  lastSentAt?: string;
+  acceptedAt?: string;
+}
+
+export interface ChurchInviteDoc {
+  email: string;
+  churchId: string;
+  churchSlug: string;
+  churchName: string;
+  role: TeamRole;
+  status: 'pending' | 'accepted';
+  emailSent?: boolean;
+  invitedBy?: string;
+  invitedAt: string;
+  lastSentAt?: string;
+  acceptedAt?: string;
+  acceptedUid?: string;
 }
 
 export interface PlatformUser {

@@ -12,6 +12,7 @@ import { ChurchDirectoryView } from './components/views/ChurchDirectoryView';
 import { ChurchInfoView } from './components/views/ChurchInfoView';
 import { DeaconScheduleView } from './components/views/DeaconScheduleView';
 import { HomeView } from './components/views/HomeView';
+import { InviteAcceptView } from './components/views/InviteAcceptView';
 import { ManagerView } from './components/views/ManagerView';
 import { PlatformAdminView } from './components/views/PlatformAdminView';
 import { ChurchProvider, useChurch } from './context/ChurchContext';
@@ -152,7 +153,7 @@ const MainShell: React.FC = () => {
 
   // Show loading screen (logo/skeleton) when opening /{slug} until church data arrives
   const isMemberChurchView =
-    currentView !== 'admin' && currentView !== 'manager';
+    currentView !== 'admin' && currentView !== 'manager' && currentView !== 'invite';
   if (isMemberChurchView && (isChurchLoading || !activeChurch)) {
     return <ChurchLoadingShell />;
   }
@@ -161,7 +162,7 @@ const MainShell: React.FC = () => {
     <div className="min-h-screen bg-[#FAF9F6] text-stone-800 flex flex-col justify-between selection:bg-[#344E41] selection:text-white">
       <div>
         {/* 1. POSIÇÃO FIXA: BANNER TOPO (only when inside a church member view) */}
-        {activeChurch && currentView !== 'admin' && currentView !== 'manager' && (
+        {activeChurch && currentView !== 'admin' && currentView !== 'manager' && currentView !== 'invite' && (
           <div className="bg-stone-900/5 border-b border-stone-200/60">
             <div className="max-w-6xl mx-auto px-3 sm:px-6 py-2 empty:hidden">
               <BannerCarousel position="topo" />
@@ -175,6 +176,7 @@ const MainShell: React.FC = () => {
         {/* 3. Main Content Container */}
         <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 sm:pt-8 pb-20 lg:pb-12">
           {currentView === 'admin' && <PlatformAdminView />}
+          {currentView === 'invite' && <InviteAcceptView />}
           {currentView === 'home' && <HomeView />}
           {currentView === 'bible' && <BibleView />}
           {currentView === 'bulletins' && <BulletinsView />}

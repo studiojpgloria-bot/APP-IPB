@@ -46,6 +46,11 @@ service cloud.firestore {
               (request.auth.token.email in get(/databases/$(database)/documents/churches/$(churchId)).data.adminEmails)
             ) ||
             (
+              isVerifiedEmail() &&
+              exists(/databases/$(database)/documents/churches/$(churchId)/convites/$(request.auth.token.email)) &&
+              get(/databases/$(database)/documents/churches/$(churchId)/convites/$(request.auth.token.email)).data.role == 'admin'
+            ) ||
+            (
               !('adminEmails' in get(/databases/$(database)/documents/churches/$(churchId)).data) &&
               (
                 (request.auth.uid in get(/databases/$(database)/documents/churches/$(churchId)).data.managerUids) ||
@@ -76,6 +81,10 @@ service cloud.firestore {
               isVerifiedEmail() &&
               ('editorEmails' in get(/databases/$(database)/documents/churches/$(churchId)).data) &&
               (request.auth.token.email in get(/databases/$(database)/documents/churches/$(churchId)).data.editorEmails)
+            ) ||
+            (
+              isVerifiedEmail() &&
+              exists(/databases/$(database)/documents/churches/$(churchId)/convites/$(request.auth.token.email))
             ) ||
             (request.auth.uid in get(/databases/$(database)/documents/churches/$(churchId)).data.managerUids) ||
             (
@@ -148,6 +157,24 @@ service cloud.firestore {
         request.resource.data.ownerUid == resource.data.ownerUid
       );
       allow delete: if isPlatformOwner();
+
+      // Subcoleção de Convites da Equipe (churches/{churchId}/convites/{inviteEmail})
+      // Apenas Administradores da igreja ou Owner criam/removem convites;
+      // O próprio convidado com e-mail verificado pode ler e aceitar o convite do seu e-mail.
+      match /convites/{inviteEmail} {
+        allow read: if isChurchAdmin(churchId) || (
+          isVerifiedEmail() &&
+          request.auth.token.email == inviteEmail
+        );
+        allow create, delete: if isChurchAdmin(churchId);
+        allow update: if isChurchAdmin(churchId) || (
+          isVerifiedEmail() &&
+          request.auth.token.email == inviteEmail &&
+          request.resource.data.email == resource.data.email &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.churchId == resource.data.churchId
+        );
+      }
 
       // Subcoleções de Publicação (boletins, escalas, aniversariantes, banners): Administradores e Editores
       match /boletins/{itemId} {

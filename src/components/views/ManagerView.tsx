@@ -123,6 +123,7 @@ export const ManagerView: React.FC = () => {
     createNewChurchInCloud,
     updateChurchSlugAndMeta,
     inviteTeamMemberByEmail,
+    resendTeamInviteEmail,
     updateTeamMemberRoleByEmail,
     removeCoManagerEmail,
     isPlatformOwner,
@@ -1148,10 +1149,27 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
     setTimeout(() => setCopiedEnvVars(false), 3000);
   };
 
-  const buildTeamInviteMessage = (email: string, role: 'admin' | 'editor') => {
+  const [resendingInviteEmail, setResendingInviteEmail] = useState<string | null>(null);
+
+  const buildTeamInviteLink = (email: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const slug = activeChurch?.slug || '';
+    return `${origin}/convite?igreja=${encodeURIComponent(slug)}&email=${encodeURIComponent(
+      email.toLowerCase().trim()
+    )}`;
+  };
+
+  const buildTeamInviteMessage = (email: string, role: 'admin' | 'editor') => {
+    const inviteLink = buildTeamInviteLink(email);
     const roleLabel = role === 'admin' ? 'Administrador(a)' : 'Editor(a)';
-    return `Olá! Você foi convidado(a) para fazer parte da equipe da igreja *${activeChurch?.name || 'nossa igreja'}* como *${roleLabel}*.\n\nPara acessar o painel:\n1. Acesse o link: ${origin}/gestor\n2. Entre com sua Conta Google ou crie sua conta usando exatamente o e-mail convidado: ${email}`;
+    return `Olá! Você foi convidado(a) para fazer parte da equipe da igreja *${
+      activeChurch?.name || 'nossa igreja'
+    }* como *${roleLabel}*.\n\nPara aceitar o convite e acessar o painel:\n1. Abra o link do convite: ${inviteLink}\n2. Confirme seu e-mail (${email}) ou entre com sua Conta Google.`;
+  };
+
+  const handleCopyInviteLink = (email: string) => {
+    navigator.clipboard.writeText(buildTeamInviteLink(email));
+    showToast('Link do convite copiado para a área de transferência!');
   };
 
   const handleCopyInviteMessage = (email: string, role: 'admin' | 'editor') => {
@@ -1164,6 +1182,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
   };
 
+  const handleResendInviteEmail = async (email: string) => {
+    const clean = email.trim().toLowerCase();
+    setResendingInviteEmail(clean);
+    try {
+      await resendTeamInviteEmail(clean);
+    } finally {
+      setResendingInviteEmail(null);
+    }
+  };
+
   const handleInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = inviteEmailInput.trim().toLowerCase();
@@ -1173,6 +1201,8 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
       await inviteTeamMemberByEmail(cleanEmail, inviteRoleInput);
       setLastInvitedMember({ email: cleanEmail, role: inviteRoleInput });
       setInviteEmailInput('');
+    } catch {
+      // Error toast is already displayed by ChurchContext / handleFirestoreError
     } finally {
       setInvitingManager(false);
     }
@@ -3340,19 +3370,19 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
             </div>
           </form>
 
-          {/* Box de Convite Pronto (Requirement 7: Copiar mensagem de convite & Enviar pelo WhatsApp) */}
+          {/* Box de Convite Pronto */}
           {lastInvitedMember && (
             <div className="p-4 sm:p-5 rounded-2xl bg-emerald-50/90 border border-emerald-200 space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-200 text-emerald-950 px-2.5 py-0.5 rounded-full inline-block">
-                    Convite Registrado com Sucesso
+                    Convite Registrado — E-mail Enviado
                   </span>
                   <h4 className="font-bold text-stone-900 text-sm">
-                    Envie o convite para <span className="font-mono text-[#344E41]">{lastInvitedMember.email}</span>
+                    Convite criado para <span className="font-mono text-[#344E41]">{lastInvitedMember.email}</span>
                   </h4>
                   <p className="text-xs text-stone-600">
-                    Compartilhe a mensagem pronta abaixo com o link de acesso e as instruções para entrar na equipe:
+                    Enviamos o link de login sem senha para o e-mail convidado. Você também pode copiar o link direto ou enviar pelo WhatsApp:
                   </p>
                 </div>
                 <button
@@ -3367,11 +3397,24 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => handleCopyInviteMessage(lastInvitedMember.email, lastInvitedMember.role)}
+                  onClick={() => void handleResendInviteEmail(lastInvitedMember.email)}
+                  disabled={resendingInviteEmail === lastInvitedMember.email}
+                  className="min-h-[40px] px-4 py-2 rounded-xl bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 text-xs font-bold flex items-center gap-2 transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5 text-[#344E41]" />
+                  <span>
+                    {resendingInviteEmail === lastInvitedMember.email
+                      ? 'Reenviando...'
+                      : 'Reenviar e-mail'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyInviteLink(lastInvitedMember.email)}
                   className="min-h-[40px] px-4 py-2 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white text-xs font-bold flex items-center gap-2 transition-colors"
                 >
                   <Copy className="w-3.5 h-3.5" />
-                  <span>Copiar mensagem de convite</span>
+                  <span>Copiar link</span>
                 </button>
                 <button
                   type="button"
@@ -3399,11 +3442,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     name: undefined as string | undefined,
                     role: 'admin' as const,
                     status: em.toLowerCase() === activeChurch.ownerEmail?.toLowerCase() ? ('active' as const) : ('pending' as const),
-                    invitedAt: activeChurch.createdAt
+                    invitedAt: String(activeChurch.createdAt || '')
                   }))
               ).map((member) => {
                 const isTitular = member.email.toLowerCase() === activeChurch.ownerEmail?.toLowerCase();
                 const isPending = member.status === 'pending' && !isTitular;
+                const isResendingThis = resendingInviteEmail === member.email.toLowerCase();
                 return (
                   <div
                     key={member.email}
@@ -3434,20 +3478,22 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                             {member.email}
                           </span>
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                            className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
                               isPending
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                 : 'bg-emerald-100 text-emerald-800'
                             }`}
                           >
-                            {isPending ? 'Convite Pendente' : 'Ativo'}
+                            {isPending ? 'Pendente — e-mail enviado' : 'Ativo'}
                           </span>
                         </div>
                         <p className="text-[11px] text-stone-500">
                           {isTitular
                             ? 'Criador / Administrador Titular da Igreja'
                             : isPending
-                            ? 'Aguardando criar conta ou entrar com este e-mail para liberar automaticamente'
+                            ? `Nível: ${
+                                member.role === 'admin' ? 'Administrador' : 'Editor'
+                              } • Aguardando clicar no link enviado por e-mail ou entrar em /convite?igreja=${activeChurch.slug}`
                             : member.role === 'admin'
                             ? 'Administrador (acesso total aos dados e equipe)'
                             : 'Editor (publica boletins, escalas, aniversariantes e banners)'}
@@ -3457,15 +3503,29 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
 
                     {!isTitular && (
                       <div className="flex flex-wrap items-center gap-2 self-end lg:self-auto shrink-0">
+                        {isPending && (
+                          <button
+                            type="button"
+                            onClick={() => void handleResendInviteEmail(member.email)}
+                            disabled={isResendingThis}
+                            className="min-h-[36px] px-2.5 py-1 rounded-xl bg-stone-100 hover:bg-stone-200 disabled:opacity-60 text-stone-700 text-xs font-semibold flex items-center gap-1"
+                            title="Reenviar link de login por e-mail"
+                          >
+                            <Mail className="w-3.5 h-3.5 text-[#344E41]" />
+                            <span>{isResendingThis ? 'Enviando...' : 'Reenviar e-mail'}</span>
+                          </button>
+                        )}
+
                         <button
                           type="button"
-                          onClick={() => handleCopyInviteMessage(member.email, member.role)}
+                          onClick={() => handleCopyInviteLink(member.email)}
                           className="min-h-[36px] px-2.5 py-1 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1"
-                          title="Copiar mensagem de convite"
+                          title="Copiar link do convite"
                         >
                           <Copy className="w-3.5 h-3.5" />
-                          <span>Copiar mensagem de convite</span>
+                          <span>Copiar link</span>
                         </button>
+
                         <button
                           type="button"
                           onClick={() => handleSendInviteWhatsApp(member.email, member.role)}
@@ -3494,9 +3554,11 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           type="button"
                           onClick={() =>
                             askConfirmation({
-                              title: 'Remover da Equipe?',
-                              message: `Deseja remover o acesso de "${member.email}" nesta igreja?`,
-                              confirmLabel: 'Sim, Remover',
+                              title: isPending ? 'Cancelar Convite?' : 'Remover da Equipe?',
+                              message: isPending
+                                ? `Deseja cancelar o convite enviado para "${member.email}"?`
+                                : `Deseja remover o acesso de "${member.email}" nesta igreja?`,
+                              confirmLabel: isPending ? 'Sim, Cancelar Convite' : 'Sim, Remover',
                               isDestructive: true,
                               onConfirm: () => {
                                 void removeCoManagerEmail(member.email);
@@ -3506,7 +3568,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           className="px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-1"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Remover</span>
+                          <span>{isPending ? 'Cancelar convite' : 'Remover'}</span>
                         </button>
                       </div>
                     )}

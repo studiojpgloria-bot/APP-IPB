@@ -27,15 +27,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="297867672903"
 
 ---
 
-## 2. Adicionar o Domínio da Vercel no Firebase Auth (Domínios Autorizados)
+## 2. Ativar Convite por E-mail (Link sem Senha) e Domínio da Vercel no Firebase Auth
 
-Para que o login com **Google** e **E-mail/Senha** funcione no endereço da Vercel sem erro de domínio não autorizado (`auth/unauthorized-domain`):
+Para que o login com **Google**, **E-mail/Senha** e o envio gratuito de **Convites da Equipe por E-mail (`sendSignInLinkToEmail` / `/convite`)** funcionem sem erros (`auth/operation-not-allowed` ou `auth/unauthorized-domain`):
 
 1. Abra o [Firebase Console](https://console.firebase.google.com/) e selecione o projeto **`canvas-bond-lw2pc`**.
-2. No menu lateral, clique em **Authentication** > aba **Sign-in method**:
-   - Certifique-se de que os provedores **Google** e **E-mail/senha** estejam **Ativados**.
+2. No menu lateral, clique em **Authentication** > aba **Métodos de login** (*Sign-in method*):
+   - Certifique-se de que o provedor **Google** esteja **Ativado**.
+   - Clique em **E-mail/senha**, marque **Ativar** para *E-mail/senha* **e também marque a opção "Link do e-mail (login sem senha)"** (*Email link / passwordless sign-in*), depois clique em **Salvar**. *(Obrigatório para que os convites da equipe cheguem por e-mail!)*
 3. Ainda em **Authentication**, clique na aba **Settings** (Configurações) > **Authorized domains** (Domínios autorizados).
-4. Clique em **Add domain** (Adicionar domínio) e insira o domínio gerado pela Vercel (ex.: `seu-projeto.vercel.app`) e, se tiver domínio próprio, adicione-o também (ex.: `minhaigreja.com.br`).
+4. Clique em **Add domain** (Adicionar domínio) e mantenha **`app-ipb.vercel.app`** (e qualquer domínio personalizado que utilizar) na lista de domínios autorizados.
 
 ---
 

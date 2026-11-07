@@ -58,6 +58,26 @@
         "id": { "type": "string" }
       },
       "required": ["id"]
+    },
+    "ChurchInvite": {
+      "title": "ChurchInvite",
+      "description": "Team invitation document inside /churches/{churchId}/convites/{inviteEmail}",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "churchId": { "type": "string" },
+        "churchSlug": { "type": "string" },
+        "churchName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "editor"] },
+        "status": { "type": "string", "enum": ["pending", "accepted"] },
+        "emailSent": { "type": "boolean" },
+        "invitedBy": { "type": "string" },
+        "invitedAt": { "type": "string" },
+        "lastSentAt": { "type": "string" },
+        "acceptedAt": { "type": "string" },
+        "acceptedUid": { "type": "string" }
+      },
+      "required": ["email", "churchId", "role", "status"]
     }
   },
   "firestore": {
@@ -72,6 +92,10 @@
     "/churches/{churchId}": {
       "schema": { "$ref": "#/entities/ChurchTenant" },
       "description": "Registered churches on the platform"
+    },
+    "/churches/{churchId}/convites/{inviteEmail}": {
+      "schema": { "$ref": "#/entities/ChurchInvite" },
+      "description": "Team invitations for church administrators and editors"
     },
     "/churches/{churchId}/boletins/{itemId}": {
       "schema": { "$ref": "#/entities/SubcollectionItem" },
