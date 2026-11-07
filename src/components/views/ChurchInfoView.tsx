@@ -20,7 +20,26 @@ import { formatTimeStandard } from '../../services/cloudDatabase';
 export const ChurchInfoView: React.FC = () => {
   const { churchInfo, activeChurch, isManagerAuthenticated, isMobileAppPreview, setCurrentView } = useChurch();
 
-  const displayChurchName = churchInfo.name || activeChurch?.name || 'Nossa Igreja';
+  const displayChurchName = churchInfo.name || activeChurch?.name || '';
+  const hasHistory = Boolean(churchInfo.aboutHistory?.trim());
+  const hasMission = Boolean(churchInfo.missionVision?.trim());
+  const hasLeadership = Array.isArray(churchInfo.leadership) && churchInfo.leadership.length > 0;
+  const hasLocation = Boolean(
+    churchInfo.address?.trim() ||
+      churchInfo.cityStateZip?.trim() ||
+      churchInfo.googleMapsUrl?.trim()
+  );
+  const hasContact = Boolean(
+    churchInfo.primaryPhone?.trim() ||
+      churchInfo.secondaryPhone?.trim() ||
+      churchInfo.email?.trim() ||
+      churchInfo.whatsappNumber?.trim()
+  );
+  const hasSocial = Boolean(
+    churchInfo.instagramUrl?.trim() ||
+      churchInfo.youtubeUrl?.trim() ||
+      churchInfo.facebookUrl?.trim()
+  );
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-8">
@@ -34,9 +53,13 @@ export const ChurchInfoView: React.FC = () => {
           }`}
         >
           <div className="flex items-start gap-4">
-            {churchInfo.logoUrl ? (
+            {churchInfo.logoUrl || activeChurch?.logoUrl ? (
               <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-[#344E41] border border-stone-200 shadow-xs shrink-0">
-                <img src={churchInfo.logoUrl} alt={displayChurchName} className="w-full h-full object-cover" />
+                <img
+                  src={churchInfo.logoUrl || activeChurch?.logoUrl}
+                  alt={displayChurchName}
+                  className="w-full h-full object-cover"
+                />
               </div>
             ) : null}
             <div className="space-y-1.5 max-w-2xl min-w-0">
@@ -47,11 +70,14 @@ export const ChurchInfoView: React.FC = () => {
                 {displayChurchName}
               </h1>
               <p className="text-stone-600 text-xs sm:text-base leading-relaxed">
-                {churchInfo.tagline ||
-                  (isManagerAuthenticated
-                    ? 'Configure o nome, história, cultos e liderança na Área do Gestor.'
-                    : 'Seja bem-vindo! Junte-se a nós para adorar a Deus.')}
+                {churchInfo.tagline?.trim() ||
+                  'Seja bem-vindo! Junte-se a nós para adorar a Deus.'}
               </p>
+              {isManagerAuthenticated && !churchInfo.tagline?.trim() && (
+                <p className="text-xs text-[#344E41] font-medium">
+                  Configure o lema, história, cultos e liderança na Área do Gestor.
+                </p>
+              )}
             </div>
           </div>
 
@@ -78,7 +104,7 @@ export const ChurchInfoView: React.FC = () => {
                 <span>Como Chegar</span>
               </a>
             )}
-            {isManagerAuthenticated && !churchInfo.tagline && (
+            {isManagerAuthenticated && !churchInfo.tagline?.trim() && (
               <button
                 onClick={() => setCurrentView('manager')}
                 className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#344E41] hover:bg-[#284136] text-white font-semibold text-xs sm:text-sm flex items-center gap-2 shadow-xs transition-colors"
@@ -90,43 +116,53 @@ export const ChurchInfoView: React.FC = () => {
         </div>
       </section>
 
-      {/* 2. História & Missão */}
-      {(churchInfo.aboutHistory || churchInfo.missionVision || isManagerAuthenticated) && (
-        <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+      {/* 2. História & Missão (Oculto para visitantes quando vazio; dicas visíveis apenas para gestores logados) */}
+      {(hasHistory || hasMission || isManagerAuthenticated) && (
+        <div
+          className={`grid gap-6 ${
+            isMobileAppPreview || !(hasHistory && hasMission) && !isManagerAuthenticated
+              ? 'grid-cols-1'
+              : 'grid-cols-1 md:grid-cols-2'
+          }`}
+        >
           {/* História */}
-          {(churchInfo.aboutHistory || isManagerAuthenticated) && (
+          {(hasHistory || isManagerAuthenticated) && (
             <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
               <div className="w-10 h-10 rounded-xl bg-[#EAF0EC] text-[#344E41] flex items-center justify-center">
                 <Church className="w-5 h-5" />
               </div>
               <h2 className="text-lg font-bold text-stone-900 tracking-tight">Nossa História & Raízes</h2>
-              {churchInfo.aboutHistory ? (
+              {hasHistory ? (
                 <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
                   {churchInfo.aboutHistory}
                 </p>
               ) : (
-                <p className="text-xs text-stone-400 italic">
-                  Nenhuma descrição histórica cadastrada ainda. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
-                </p>
+                isManagerAuthenticated && (
+                  <p className="text-xs text-stone-400 italic">
+                    Nenhuma descrição histórica cadastrada ainda. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
+                  </p>
+                )
               )}
             </section>
           )}
 
           {/* Missão e Visão */}
-          {(churchInfo.missionVision || isManagerAuthenticated) && (
+          {(hasMission || isManagerAuthenticated) && (
             <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
               <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#B08938] flex items-center justify-center">
                 <Heart className="w-5 h-5" />
               </div>
               <h2 className="text-lg font-bold text-stone-900 tracking-tight">Missão & Declaração de Fé</h2>
-              {churchInfo.missionVision ? (
+              {hasMission ? (
                 <p className="text-sm text-stone-700 leading-relaxed font-serif whitespace-pre-line">
                   {churchInfo.missionVision}
                 </p>
               ) : (
-                <p className="text-xs text-stone-400 italic">
-                  Missão e declaração de fé ainda não configuradas.
-                </p>
+                isManagerAuthenticated && (
+                  <p className="text-xs text-stone-400 italic">
+                    Missão e declaração de fé ainda não configuradas. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
+                  </p>
+                )
               )}
             </section>
           )}
@@ -183,8 +219,8 @@ export const ChurchInfoView: React.FC = () => {
         )}
       </section>
 
-      {/* 4. Liderança Pastoral & Conselho */}
-      {(churchInfo.leadership.length > 0 || isManagerAuthenticated) && (
+      {/* 4. Liderança Pastoral & Conselho (Oculto para visitantes se vazio) */}
+      {(hasLeadership || isManagerAuthenticated) && (
         <section className="bg-white rounded-2xl p-5 sm:p-8 border border-stone-200/90 shadow-xs space-y-5">
           <div className="flex items-center gap-2 pb-3 border-b border-stone-100">
             <Users className="w-5 h-5 text-[#344E41] shrink-0" />
@@ -196,7 +232,7 @@ export const ChurchInfoView: React.FC = () => {
             </div>
           </div>
 
-          {churchInfo.leadership.length > 0 ? (
+          {hasLeadership ? (
             <div
               className={`grid gap-4 ${
                 isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
@@ -241,137 +277,160 @@ export const ChurchInfoView: React.FC = () => {
               ))}
             </div>
           ) : (
-            <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200/70 text-center text-xs text-stone-500">
-              Nenhum líder ou pastor cadastrado no momento.
-            </div>
+            isManagerAuthenticated && (
+              <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200/70 text-center text-xs text-stone-500">
+                Nenhum líder ou pastor cadastrado ainda. Configure na aba &ldquo;Informações da Igreja&rdquo; no Gestor.
+              </div>
+            )
           )}
         </section>
       )}
 
-      {/* 5. Endereço, Telefones, Redes Sociais e Mapa */}
-      <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-3'}`}>
-        {/* Endereço & Maps */}
-        <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-            <MapPin className="w-5 h-5" />
-          </div>
-          <h3 className="font-bold text-stone-900 text-sm">Localização Física</h3>
-          {churchInfo.address || churchInfo.cityStateZip ? (
-            <p className="text-xs text-stone-600 leading-relaxed">
-              {churchInfo.address}
-              {churchInfo.cityStateZip && (
-                <>
-                  <br />
-                  {churchInfo.cityStateZip}
-                </>
+      {/* 5. Endereço, Telefones e Redes Sociais (Cada bloco só aparece para visitantes se tiver dados) */}
+      {(hasLocation || hasContact || hasSocial || isManagerAuthenticated) && (
+        <div className={`grid gap-6 ${isMobileAppPreview ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-3'}`}>
+          {/* Endereço & Maps */}
+          {(hasLocation || isManagerAuthenticated) && (
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                <MapPin className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-stone-900 text-sm">Localização Física</h3>
+              {churchInfo.address?.trim() || churchInfo.cityStateZip?.trim() ? (
+                <p className="text-xs text-stone-600 leading-relaxed">
+                  {churchInfo.address}
+                  {churchInfo.cityStateZip && (
+                    <>
+                      {churchInfo.address ? <br /> : null}
+                      {churchInfo.cityStateZip}
+                    </>
+                  )}
+                </p>
+              ) : (
+                isManagerAuthenticated && (
+                  <p className="text-xs text-stone-400 italic">
+                    Endereço ainda não informado. Configure no Gestor.
+                  </p>
+                )
               )}
-            </p>
-          ) : (
-            <p className="text-xs text-stone-400 italic">Endereço ainda não informado.</p>
+              {churchInfo.googleMapsUrl && (
+                <a
+                  href={churchInfo.googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#344E41] hover:underline pt-1"
+                >
+                  <span>Abrir no Google Maps</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </section>
           )}
-          {churchInfo.googleMapsUrl && (
-            <a
-              href={churchInfo.googleMapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#344E41] hover:underline pt-1"
-            >
-              <span>Abrir no Google Maps</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          )}
-        </section>
 
-        {/* Telefones & WhatsApp */}
-        <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-stone-100 text-stone-700 flex items-center justify-center">
-            <Phone className="w-5 h-5" />
-          </div>
-          <h3 className="font-bold text-stone-900 text-sm">Canais de Contato</h3>
-          {churchInfo.primaryPhone || churchInfo.secondaryPhone || churchInfo.email ? (
-            <div className="space-y-1 text-xs text-stone-600">
-              {churchInfo.primaryPhone && (
-                <p>
-                  <span className="font-medium">Telefone:</span> {churchInfo.primaryPhone}
-                </p>
+          {/* Telefones & WhatsApp */}
+          {(hasContact || isManagerAuthenticated) && (
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-stone-100 text-stone-700 flex items-center justify-center">
+                <Phone className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-stone-900 text-sm">Canais de Contato</h3>
+              {churchInfo.primaryPhone || churchInfo.secondaryPhone || churchInfo.email ? (
+                <div className="space-y-1 text-xs text-stone-600">
+                  {churchInfo.primaryPhone && (
+                    <p>
+                      <span className="font-medium">Telefone:</span> {churchInfo.primaryPhone}
+                    </p>
+                  )}
+                  {churchInfo.secondaryPhone && (
+                    <p>
+                      <span className="font-medium">Secretaria:</span> {churchInfo.secondaryPhone}
+                    </p>
+                  )}
+                  {churchInfo.email && (
+                    <p className="break-all">
+                      <span className="font-medium">E-mail:</span> {churchInfo.email}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                !churchInfo.whatsappNumber &&
+                isManagerAuthenticated && (
+                  <p className="text-xs text-stone-400 italic">
+                    Nenhum telefone, WhatsApp ou e-mail cadastrado. Configure no Gestor.
+                  </p>
+                )
               )}
-              {churchInfo.secondaryPhone && (
-                <p>
-                  <span className="font-medium">Secretaria:</span> {churchInfo.secondaryPhone}
-                </p>
+              {churchInfo.whatsappNumber && (
+                <a
+                  href={`https://wa.me/${churchInfo.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage || '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline pt-1"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>Conversar pelo WhatsApp</span>
+                </a>
               )}
-              {churchInfo.email && (
-                <p className="break-all">
-                  <span className="font-medium">E-mail:</span> {churchInfo.email}
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-stone-400 italic">Nenhum telefone ou e-mail cadastrado.</p>
+            </section>
           )}
-          {churchInfo.whatsappNumber && (
-            <a
-              href={`https://wa.me/${churchInfo.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(churchInfo.whatsappDefaultMessage || '')}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline pt-1"
-            >
-              <MessageCircle className="w-3.5 h-3.5" />
-              <span>Conversar pelo WhatsApp</span>
-            </a>
-          )}
-        </section>
 
-        {/* Redes Sociais */}
-        <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#B08938] flex items-center justify-center">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <h3 className="font-bold text-stone-900 text-sm">Redes Sociais & Transmissões</h3>
-          <p className="text-xs text-stone-600 leading-relaxed">
-            Acompanhe nossas mensagens, estudos e cultos ao vivo online:
-          </p>
-          {churchInfo.instagramUrl || churchInfo.youtubeUrl || churchInfo.facebookUrl ? (
-            <div className="flex items-center gap-2 pt-1">
-              {churchInfo.instagramUrl && (
-                <a
-                  href={churchInfo.instagramUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
-                  title="Instagram"
-                >
-                  <Instagram className="w-4 h-4" />
-                </a>
+          {/* Redes Sociais */}
+          {(hasSocial || isManagerAuthenticated) && (
+            <section className="bg-white rounded-2xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#B08938] flex items-center justify-center">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-stone-900 text-sm">Redes Sociais & Transmissões</h3>
+              <p className="text-xs text-stone-600 leading-relaxed">
+                Acompanhe nossas mensagens, estudos e cultos ao vivo online:
+              </p>
+              {hasSocial ? (
+                <div className="flex items-center gap-2 pt-1">
+                  {churchInfo.instagramUrl && (
+                    <a
+                      href={churchInfo.instagramUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
+                      title="Instagram"
+                    >
+                      <Instagram className="w-4 h-4" />
+                    </a>
+                  )}
+                  {churchInfo.youtubeUrl && (
+                    <a
+                      href={churchInfo.youtubeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
+                      title="YouTube"
+                    >
+                      <Youtube className="w-4 h-4" />
+                    </a>
+                  )}
+                  {churchInfo.facebookUrl && (
+                    <a
+                      href={churchInfo.facebookUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
+                      title="Facebook"
+                    >
+                      <Facebook className="w-4 h-4" />
+                    </a>
+                  )}
+                </div>
+              ) : (
+                isManagerAuthenticated && (
+                  <p className="text-xs text-stone-400 italic">
+                    Redes sociais ainda não cadastradas. Configure no Gestor.
+                  </p>
+                )
               )}
-              {churchInfo.youtubeUrl && (
-                <a
-                  href={churchInfo.youtubeUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
-                  title="YouTube"
-                >
-                  <Youtube className="w-4 h-4" />
-                </a>
-              )}
-              {churchInfo.facebookUrl && (
-                <a
-                  href={churchInfo.facebookUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition-colors"
-                  title="Facebook"
-                >
-                  <Facebook className="w-4 h-4" />
-                </a>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-stone-400 italic">Redes sociais ainda não cadastradas.</p>
+            </section>
           )}
-        </section>
-      </div>
+        </div>
+      )}
     </div>
   );
 };

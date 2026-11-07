@@ -113,7 +113,7 @@ export const HomeView: React.FC = () => {
     .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
     .find((s) => s.date >= todayIso);
 
-  const displayChurchName = churchInfo.name || activeChurch?.name || 'Bem-vindo à Nossa Igreja';
+  const displayChurchName = churchInfo.name || activeChurch?.name || '';
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-6">
@@ -139,12 +139,15 @@ export const HomeView: React.FC = () => {
             {displayChurchName}
           </h1>
           <p className={`text-stone-200 leading-relaxed ${isMobileAppPreview ? 'text-xs' : 'text-xs sm:text-base'}`}>
-            {churchInfo.tagline
-              ? `${churchInfo.tagline}. Junte-se a nós para adorar a Deus, aprender da Sua Palavra e crescer em comunidade.`
-              : isManagerAuthenticated
-              ? 'Acesse o Painel do Gestor para cadastrar o lema da sua igreja, horários de cultos, pastores, boletins e escalas.'
-              : 'Seja bem-vindo! Junte-se a nós para adorar a Deus, aprender da Sua Palavra e crescer em comunhão.'}
+            {churchInfo.tagline?.trim()
+              ? churchInfo.tagline.trim()
+              : 'Seja bem-vindo! Junte-se a nós para adorar a Deus.'}
           </p>
+          {isManagerAuthenticated && !churchInfo.tagline?.trim() && (
+            <p className="text-xs text-amber-200/90 font-medium">
+              Acesse o Painel do Gestor para cadastrar o lema da sua igreja, horários de cultos, pastores, boletins e escalas.
+            </p>
+          )}
 
           <div className="pt-2 flex flex-wrap items-center gap-2.5">
             <button
@@ -154,7 +157,7 @@ export const HomeView: React.FC = () => {
               <span>Horários dos Cultos</span>
               <ArrowRight className="w-4 h-4 shrink-0" />
             </button>
-            {isManagerAuthenticated && !churchInfo.tagline && (
+            {isManagerAuthenticated && !churchInfo.tagline?.trim() && (
               <button
                 onClick={() => setCurrentView('manager')}
                 className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white/15 text-white border border-white/20 font-semibold text-xs sm:text-sm hover:bg-white/25 transition-colors flex items-center gap-2"
@@ -573,10 +576,8 @@ export const HomeView: React.FC = () => {
       </div>
 
       {/* 6. Localização e Contato Rápido */}
-      {(churchInfo.address ||
-        churchInfo.cityStateZip ||
-        churchInfo.googleMapsUrl ||
-        churchInfo.primaryPhone ||
+      {(Boolean(churchInfo.address?.trim() || churchInfo.cityStateZip?.trim()) ||
+        Boolean(churchInfo.googleMapsUrl?.trim() || churchInfo.primaryPhone?.trim()) ||
         isManagerAuthenticated) && (
         <section
           className={`bg-white rounded-2xl p-5 border border-stone-200/90 shadow-xs flex gap-4 ${
@@ -594,11 +595,15 @@ export const HomeView: React.FC = () => {
               <MapPin className="w-4 h-4 text-[#344E41] shrink-0" />
               <span>Faça-nos uma visita</span>
             </h3>
-            <p className="text-xs sm:text-sm text-stone-600">
-              {churchInfo.address || churchInfo.cityStateZip
-                ? [churchInfo.address, churchInfo.cityStateZip].filter(Boolean).join(' · ')
-                : 'Configure o endereço e telefone da igreja no Painel do Gestor.'}
-            </p>
+            {churchInfo.address?.trim() || churchInfo.cityStateZip?.trim() ? (
+              <p className="text-xs sm:text-sm text-stone-600">
+                {[churchInfo.address, churchInfo.cityStateZip].filter((v) => v && v.trim()).join(' · ')}
+              </p>
+            ) : isManagerAuthenticated ? (
+              <p className="text-xs sm:text-sm text-stone-500">
+                Configure o endereço e telefone da igreja no Painel do Gestor.
+              </p>
+            ) : null}
           </div>
           <div className={`flex items-center gap-2 ${isMobileAppPreview ? 'w-full' : 'w-full md:w-auto'}`}>
             {churchInfo.googleMapsUrl && (

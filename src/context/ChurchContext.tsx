@@ -56,6 +56,7 @@ interface ChurchContextType {
   // Navigation & Multi-Church Routing
   currentView: ViewMode;
   setCurrentView: (view: ViewMode) => void;
+  isChurchLoading: boolean;
   activeChurch: ChurchTenant | null;
   activeChurches: ChurchTenant[];
   managedChurches: ChurchTenant[];
@@ -238,6 +239,15 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     typeof window !== 'undefined' ? window.location.pathname : '/'
   );
   const savedSlugOnBoot = ChurchStorageService.getSelectedChurchSlug();
+  const targetSlugOnBoot =
+    initialRoute.mode === 'church' || (initialRoute.mode === 'manager' && initialRoute.slug)
+      ? initialRoute.slug || ''
+      : initialRoute.mode === 'directory' && savedSlugOnBoot
+      ? savedSlugOnBoot
+      : '';
+  const cachedBrandOnBoot = targetSlugOnBoot
+    ? ChurchStorageService.getCachedChurchBrand(targetSlugOnBoot)
+    : null;
 
   const [currentView, setCurrentViewState] = useState<ViewMode>(() => {
     if (initialRoute.mode === 'admin') return 'admin';
@@ -246,6 +256,10 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (savedSlugOnBoot) return 'home';
     return 'directory';
   });
+
+  const [isChurchLoading, setIsChurchLoading] = useState<boolean>(() =>
+    Boolean(targetSlugOnBoot && !cachedBrandOnBoot)
+  );
 
   const [isMobileAppPreview, setIsMobileAppPreviewState] = useState<boolean>(false);
 
@@ -256,13 +270,59 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
   const [activeChurches, setActiveChurches] = useState<ChurchTenant[]>([]);
   const [managedChurchesState, setManagedChurchesState] = useState<ChurchTenant[]>([]);
-  const [activeChurch, setActiveChurch] = useState<ChurchTenant | null>(null);
+  const [activeChurch, setActiveChurch] = useState<ChurchTenant | null>(() => {
+    if (!cachedBrandOnBoot) return null;
+    const savedInfo = ChurchStorageService.getChurchInfo();
+    const isSameChurch =
+      savedInfo.name &&
+      savedInfo.name.trim().toLowerCase() === cachedBrandOnBoot.name.trim().toLowerCase();
+    const baseInfo = isSameChurch ? savedInfo : INITIAL_CHURCH_INFO;
+    return {
+      ...baseInfo,
+      id: cachedBrandOnBoot.id,
+      slug: cachedBrandOnBoot.slug,
+      name: cachedBrandOnBoot.name,
+      logoUrl: cachedBrandOnBoot.logoUrl || baseInfo.logoUrl || '',
+      themeColor: cachedBrandOnBoot.themeColor || '#344E41',
+      city: cachedBrandOnBoot.city || '',
+      state: cachedBrandOnBoot.state || '',
+      tagline: cachedBrandOnBoot.tagline || baseInfo.tagline || '',
+      status: 'ativa',
+      ownerUid: '',
+      ownerEmail: '',
+      managerUids: [],
+      managerEmails: []
+    };
+  });
   const [allChurchesForOwner, setAllChurchesForOwner] = useState<ChurchTenant[]>([]);
   const [allPlatformUsers, setAllPlatformUsers] = useState<PlatformUser[]>([]);
   const [isCreatingAdditionalChurch, setIsCreatingAdditionalChurch] = useState<boolean>(false);
 
-  // Current Church Data State (starts empty)
-  const [churchInfo, setChurchInfoState] = useState<ChurchInfo>(INITIAL_CHURCH_INFO);
+  // Current Church Data State (instant from local cache when reopening same church, otherwise empty)
+  const [churchInfo, setChurchInfoState] = useState<ChurchInfo>(() => {
+    if (!cachedBrandOnBoot) return INITIAL_CHURCH_INFO;
+    const savedInfo = ChurchStorageService.getChurchInfo();
+    if (
+      savedInfo.name &&
+      savedInfo.name.trim().toLowerCase() === cachedBrandOnBoot.name.trim().toLowerCase()
+    ) {
+      return {
+        ...savedInfo,
+        name: cachedBrandOnBoot.name,
+        logoUrl: cachedBrandOnBoot.logoUrl || savedInfo.logoUrl,
+        tagline: cachedBrandOnBoot.tagline || savedInfo.tagline
+      };
+    }
+    return {
+      ...INITIAL_CHURCH_INFO,
+      name: cachedBrandOnBoot.name,
+      logoUrl: cachedBrandOnBoot.logoUrl || '',
+      tagline: cachedBrandOnBoot.tagline || '',
+      cityStateZip: `${cachedBrandOnBoot.city || ''}${
+        cachedBrandOnBoot.state ? ` - ${cachedBrandOnBoot.state}` : ''
+      }`
+    };
+  });
   const [bulletins, setBulletinsState] = useState<Bulletin[]>([]);
   const [birthdays, setBirthdaysState] = useState<BirthdayPerson[]>([]);
   const [deaconSchedules, setDeaconSchedulesState] = useState<DeaconScheduleItem[]>([]);
@@ -484,21 +544,29 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const resolveRoute = async () => {
       const route = parseUrlRoute(window.location.pathname);
       if (route.mode === 'admin') {
+        setIsChurchLoading(false);
         setCurrentViewState('admin');
         return;
       }
 
       if (route.mode === 'manager' && !route.slug) {
+        setIsChurchLoading(false);
         setCurrentViewState('manager');
         return;
       }
 
       const targetSlug = route.slug || ChurchStorageService.getSelectedChurchSlug();
       if (!targetSlug) {
+        setIsChurchLoading(false);
         setActiveChurch(null);
         setChurchInfoState(INITIAL_CHURCH_INFO);
         setCurrentViewState('directory');
         return;
+      }
+
+      const cached = ChurchStorageService.getCachedChurchBrand(targetSlug);
+      if (!cached && (!activeChurch || activeChurch.slug !== targetSlug.toLowerCase())) {
+        setIsChurchLoading(true);
       }
 
       const found =
@@ -509,6 +577,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (found.status === 'bloqueada' && !isPlatformOwner) {
           showToast('Esta igreja está temporariamente indisponível na plataforma.', 'error');
           ChurchStorageService.saveSelectedChurchSlug('');
+          setIsChurchLoading(false);
           setActiveChurch(null);
           setChurchInfoState(INITIAL_CHURCH_INFO);
           setCurrentViewState('directory');
@@ -517,6 +586,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         setActiveChurch(found);
         ChurchStorageService.saveSelectedChurchSlug(found.slug);
+        ChurchStorageService.saveCachedChurchBrand(found);
+        setIsChurchLoading(false);
         if (route.mode === 'manager') {
           setCurrentViewState('manager');
         } else if (route.mode === 'directory' && window.location.pathname === '/') {
@@ -526,6 +597,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       } else {
         // Saved slug or route slug does not exist in Firestore -> clean up and go to directory
         ChurchStorageService.saveSelectedChurchSlug('');
+        setIsChurchLoading(false);
         setActiveChurch(null);
         setChurchInfoState(INITIAL_CHURCH_INFO);
         if (route.mode === 'manager') {
@@ -543,14 +615,17 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const handlePopState = () => {
       const r = parseUrlRoute(window.location.pathname);
       if (r.mode === 'admin') {
+        setIsChurchLoading(false);
         setCurrentViewState('admin');
       } else if (r.mode === 'directory') {
+        setIsChurchLoading(false);
         setActiveChurch(null);
         setChurchInfoState(INITIAL_CHURCH_INFO);
         setCurrentViewState('directory');
       } else if (r.mode === 'manager') {
         if (r.slug) void selectChurchBySlug(r.slug, 'manager');
         else {
+          setIsChurchLoading(false);
           setActiveChurch(null);
           setChurchInfoState(INITIAL_CHURCH_INFO);
           setCurrentViewState('manager');
@@ -583,6 +658,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           return;
         }
         setActiveChurch(tenant);
+        ChurchStorageService.saveCachedChurchBrand(tenant);
+        setIsChurchLoading(false);
         const nextInfo: ChurchInfo = {
           name: tenant.name || '',
           tagline: tenant.tagline || '',
@@ -818,14 +895,45 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       activeChurches.find((c) => c.slug === clean || c.id === clean) ||
       managedChurches.find((c) => c.slug === clean || c.id === clean) ||
       allChurchesForOwner.find((c) => c.slug === clean || c.id === clean);
+
+    if (!localMatch) {
+      const cached = ChurchStorageService.getCachedChurchBrand(clean);
+      if (cached) {
+        setActiveChurch((prev) =>
+          prev?.slug === clean
+            ? prev
+            : {
+                ...INITIAL_CHURCH_INFO,
+                id: cached.id,
+                slug: cached.slug,
+                name: cached.name,
+                logoUrl: cached.logoUrl,
+                themeColor: cached.themeColor,
+                city: cached.city,
+                state: cached.state,
+                tagline: cached.tagline,
+                status: 'ativa',
+                ownerUid: '',
+                ownerEmail: '',
+                managerUids: [],
+                managerEmails: []
+              }
+        );
+      } else {
+        setIsChurchLoading(true);
+      }
+    }
+
     const tenant = localMatch || (await CloudChurchService.getChurchBySlug(clean));
 
     if (!tenant) {
+      setIsChurchLoading(false);
       showToast('Igreja não encontrada.', 'error');
       return false;
     }
 
     if (tenant.status === 'bloqueada' && !isPlatformOwner) {
+      setIsChurchLoading(false);
       showToast(
         'Esta igreja está temporariamente bloqueada pelo administrador da plataforma.',
         'error'
@@ -836,6 +944,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsCreatingAdditionalChurch(false);
     setActiveChurch(tenant);
     ChurchStorageService.saveSelectedChurchSlug(tenant.slug);
+    ChurchStorageService.saveCachedChurchBrand(tenant);
+    setIsChurchLoading(false);
     setCurrentViewState(targetView);
 
     if (typeof window !== 'undefined') {
@@ -850,6 +960,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const switchChurch = () => {
     setIsCreatingAdditionalChurch(false);
+    setIsChurchLoading(false);
     ChurchStorageService.saveSelectedChurchSlug('');
     setActiveChurch(null);
     setChurchInfoState(INITIAL_CHURCH_INFO);
@@ -912,6 +1023,8 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsCreatingAdditionalChurch(false);
     setActiveChurch(created);
     ChurchStorageService.saveSelectedChurchSlug(created.slug);
+    ChurchStorageService.saveCachedChurchBrand(created);
+    setIsChurchLoading(false);
     setBulletinsState([]);
     setBirthdaysState([]);
     setDeaconSchedulesState([]);
@@ -1331,6 +1444,18 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     setChurchInfoState(info);
     ChurchStorageService.saveChurchInfo(info);
+    if (activeChurch) {
+      ChurchStorageService.saveCachedChurchBrand({
+        id: activeChurch.id,
+        slug: activeChurch.slug,
+        name: info.name || activeChurch.name,
+        logoUrl: info.logoUrl || activeChurch.logoUrl,
+        themeColor: activeChurch.themeColor,
+        city: activeChurch.city,
+        state: activeChurch.state,
+        tagline: info.tagline
+      });
+    }
     if (activeChurch && isManagerAuthenticated) {
       void CloudChurchService.saveChurchTenantInfo(activeChurch.id, info);
     }
@@ -1862,6 +1987,7 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       value={{
         currentView,
         setCurrentView,
+        isChurchLoading,
         activeChurch,
         activeChurches,
         managedChurches,

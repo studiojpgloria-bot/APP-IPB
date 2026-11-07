@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Info, XCircle } from 'lucide-react';
+import { CheckCircle2, Church, Info, XCircle } from 'lucide-react';
 import { BannerCarousel } from './components/common/BannerCarousel';
 import { BottomNav } from './components/common/BottomNav';
 import { ConfirmModal } from './components/common/ConfirmModal';
@@ -48,8 +48,96 @@ const ToastOverlay: React.FC = () => {
   );
 };
 
+const ChurchLoadingShell: React.FC = () => {
+  const { activeChurch, churchInfo } = useChurch();
+  const logoUrl = activeChurch?.logoUrl || churchInfo.logoUrl;
+  const themeColor = activeChurch?.themeColor || '#344E41';
+  const churchName = activeChurch?.name || churchInfo.name;
+
+  return (
+    <div className="min-h-screen bg-[#FAF9F6] text-stone-800 flex flex-col justify-between">
+      <div>
+        {/* Skeleton Navbar */}
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200">
+          <div className="max-w-6xl mx-auto px-3.5 sm:px-6 h-16 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div
+                className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-white shadow-sm shrink-0 animate-pulse"
+                style={{ backgroundColor: themeColor }}
+              >
+                {logoUrl ? (
+                  <img src={logoUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Church className="w-5 h-5 text-white" />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {churchName ? (
+                  <span className="font-bold text-stone-900 text-sm sm:text-base block">
+                    {churchName}
+                  </span>
+                ) : (
+                  <div className="h-4 w-40 bg-stone-200 rounded-md animate-pulse" />
+                )}
+                <div className="h-2.5 w-24 bg-stone-100 rounded-md animate-pulse" />
+              </div>
+            </div>
+            <div className="hidden lg:flex items-center gap-2">
+              <div className="h-9 w-20 bg-stone-100 rounded-lg animate-pulse" />
+              <div className="h-9 w-20 bg-stone-100 rounded-lg animate-pulse" />
+              <div className="h-9 w-24 bg-stone-100 rounded-lg animate-pulse" />
+            </div>
+          </div>
+        </header>
+
+        {/* Skeleton Main Content */}
+        <main className="max-w-6xl mx-auto px-3.5 sm:px-6 pt-5 sm:pt-8 pb-20 space-y-6">
+          <div
+            className="rounded-3xl p-6 sm:p-10 text-white shadow-sm space-y-4"
+            style={{ backgroundColor: themeColor }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-white/15 flex items-center justify-center overflow-hidden animate-pulse">
+                {logoUrl ? (
+                  <img src={logoUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Church className="w-6 h-6 text-white" />
+                )}
+              </div>
+              <div className="space-y-2 flex-1">
+                {churchName ? (
+                  <h1 className="text-xl sm:text-3xl font-serif font-bold text-white">
+                    {churchName}
+                  </h1>
+                ) : (
+                  <div className="h-7 w-64 max-w-full bg-white/20 rounded-xl animate-pulse" />
+                )}
+                <div className="h-3.5 w-48 max-w-full bg-white/15 rounded-lg animate-pulse" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div
+                key={n}
+                className="p-4 rounded-2xl bg-white border border-stone-200/80 space-y-3 animate-pulse"
+              >
+                <div className="w-10 h-10 rounded-xl bg-stone-100" />
+                <div className="h-4 w-24 bg-stone-200 rounded-md" />
+                <div className="h-3 w-full bg-stone-100 rounded-md" />
+              </div>
+            ))}
+          </div>
+        </main>
+      </div>
+      <ToastOverlay />
+    </div>
+  );
+};
+
 const MainShell: React.FC = () => {
-  const { currentView, activeChurch } = useChurch();
+  const { currentView, activeChurch, isChurchLoading } = useChurch();
 
   // If on the platform root directory (/), render the dedicated Directory Screen
   if (currentView === 'directory') {
@@ -60,6 +148,13 @@ const MainShell: React.FC = () => {
         <ToastOverlay />
       </>
     );
+  }
+
+  // Show loading screen (logo/skeleton) when opening /{slug} until church data arrives
+  const isMemberChurchView =
+    currentView !== 'admin' && currentView !== 'manager';
+  if (isMemberChurchView && (isChurchLoading || !activeChurch)) {
+    return <ChurchLoadingShell />;
   }
 
   return (

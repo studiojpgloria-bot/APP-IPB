@@ -11,6 +11,7 @@ import {
 
 export const STORAGE_KEYS = {
   SELECTED_CHURCH_SLUG: 'minha_igreja_selected_slug_v1',
+  CACHED_CHURCH_BRANDS: 'minha_igreja_cached_church_brands_v1',
   CHURCH_INFO: 'minha_igreja_church_info_v1',
   BULLETINS: 'minha_igreja_bulletins_v1',
   BIRTHDAYS: 'minha_igreja_birthdays_v1',
@@ -24,6 +25,18 @@ export const STORAGE_KEYS = {
   USER_CACHE_META: 'minha_igreja_user_cache_meta_v1',
   LEGACY_CLEANED_FLAG: 'minha_igreja_legacy_ipc_cleaned_v1'
 };
+
+export interface CachedChurchBrand {
+  id: string;
+  slug: string;
+  name: string;
+  logoUrl: string;
+  themeColor: string;
+  city: string;
+  state: string;
+  tagline: string;
+  updatedAt: string;
+}
 
 export interface UserCacheMetadata {
   deviceId: string;
@@ -133,6 +146,57 @@ export class ChurchStorageService {
       }
     } catch {
       // ignore
+    }
+  }
+
+  public static saveCachedChurchBrand(church: {
+    id: string;
+    slug: string;
+    name: string;
+    logoUrl?: string;
+    themeColor?: string;
+    city?: string;
+    state?: string;
+    tagline?: string;
+  }): void {
+    if (!church.slug || !church.name) return;
+    try {
+      const cleanSlug = church.slug.trim().toLowerCase();
+      const raw = localStorage.getItem(STORAGE_KEYS.CACHED_CHURCH_BRANDS);
+      const map: Record<string, CachedChurchBrand> = raw ? JSON.parse(raw) : {};
+      const entry: CachedChurchBrand = {
+        id: church.id,
+        slug: cleanSlug,
+        name: church.name,
+        logoUrl: church.logoUrl || '',
+        themeColor: church.themeColor || '#344E41',
+        city: church.city || '',
+        state: church.state || '',
+        tagline: church.tagline || '',
+        updatedAt: new Date().toISOString()
+      };
+      map[cleanSlug] = entry;
+      map['__last__'] = entry;
+      localStorage.setItem(STORAGE_KEYS.CACHED_CHURCH_BRANDS, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  }
+
+  public static getCachedChurchBrand(slug?: string): CachedChurchBrand | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.CACHED_CHURCH_BRANDS);
+      if (!raw) return null;
+      const map = JSON.parse(raw) as Record<string, CachedChurchBrand>;
+      if (slug) {
+        const cleanSlug = slug.trim().toLowerCase();
+        if (map[cleanSlug]) return map[cleanSlug];
+        if (map['__last__'] && map['__last__'].slug === cleanSlug) return map['__last__'];
+        return null;
+      }
+      return map['__last__'] || null;
+    } catch {
+      return null;
     }
   }
 
@@ -455,6 +519,7 @@ export class ChurchStorageService {
   public static clearAllChurchCacheFromDevice(): void {
     try {
       localStorage.removeItem(STORAGE_KEYS.SELECTED_CHURCH_SLUG);
+      localStorage.removeItem(STORAGE_KEYS.CACHED_CHURCH_BRANDS);
       localStorage.removeItem(STORAGE_KEYS.CHURCH_INFO);
       localStorage.removeItem(STORAGE_KEYS.BULLETINS);
       localStorage.removeItem(STORAGE_KEYS.BIRTHDAYS);

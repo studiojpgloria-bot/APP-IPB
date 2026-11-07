@@ -245,6 +245,7 @@ export const ManagerView: React.FC = () => {
   // --- Bulletins State ---
   const [bulletinModalOpen, setBulletinModalOpen] = useState(false);
   const [editingBulletinId, setEditingBulletinId] = useState<string | null>(null);
+  const [isDuplicatingBulletin, setIsDuplicatingBulletin] = useState(false);
   const [bulletinForm, setBulletinForm] = useState<Partial<Bulletin>>({
     title: '',
     editionDate: new Date().toISOString().split('T')[0],
@@ -281,6 +282,7 @@ export const ManagerView: React.FC = () => {
   // --- Deacon Schedules State ---
   const [deaconModalOpen, setDeaconModalOpen] = useState(false);
   const [editingDeaconId, setEditingDeaconId] = useState<string | null>(null);
+  const [isDuplicatingDeacon, setIsDuplicatingDeacon] = useState(false);
   const [deaconCategoryFilter, setDeaconCategoryFilter] = useState<'ALL' | DeaconScheduleCategory>('ALL');
   const [deaconForm, setDeaconForm] = useState<Partial<DeaconScheduleItem>>({
     category: 'evento_especial',
@@ -768,10 +770,13 @@ export const ManagerView: React.FC = () => {
 
   // 2. Bulletin Handlers
   const handleOpenBulletinModal = (b?: Bulletin, duplicate = false) => {
+    setIsDuplicatingBulletin(Boolean(b && duplicate));
     if (b) {
+      const cleanBaseTitle = (b.title || '').replace(/\s*\(cópia\)$/i, '').trim();
       setEditingBulletinId(duplicate ? null : b.id);
       setBulletinForm({
         ...b,
+        title: duplicate ? `${cleanBaseTitle} (cópia)` : b.title,
         editionDate: duplicate ? new Date().toISOString().split('T')[0] : b.editionDate,
         isCurrent: duplicate ? false : b.isCurrent,
         status: duplicate ? 'draft' : b.status || 'published'
@@ -806,6 +811,8 @@ export const ManagerView: React.FC = () => {
       return;
     }
 
+    const finalStatus: PublicationStatus = isDuplicatingBulletin ? 'draft' : status;
+
     const orderOfService = liturgyInputText
       .split('\n')
       .map((l) => l.trim())
@@ -819,8 +826,8 @@ export const ManagerView: React.FC = () => {
       title: bulletinForm.title,
       editionDate: bulletinForm.editionDate,
       summary: bulletinForm.summary || '',
-      isCurrent: status === 'draft' ? false : Boolean(bulletinForm.isCurrent),
-      status,
+      isCurrent: finalStatus === 'draft' ? false : Boolean(bulletinForm.isCurrent),
+      status: finalStatus,
       type: bulletinForm.type || 'text',
       themeVerse: bulletinForm.themeVerse || '',
       pastoralWord: bulletinForm.pastoralWord || '',
@@ -836,12 +843,13 @@ export const ManagerView: React.FC = () => {
       addBulletin(payload);
     }
 
+    setIsDuplicatingBulletin(false);
     setBulletinModalOpen(false);
   };
 
   const handleSaveBulletin = (e: React.FormEvent) => {
     e.preventDefault();
-    handleSaveBulletinWithStatus(bulletinForm.status || 'published');
+    handleSaveBulletinWithStatus(isDuplicatingBulletin ? 'draft' : bulletinForm.status || 'published');
   };
 
   // 3. Birthday Handlers
@@ -932,14 +940,16 @@ export const ManagerView: React.FC = () => {
     duplicate = false,
     presetCategory?: DeaconScheduleCategory
   ) => {
+    setIsDuplicatingDeacon(Boolean(item && duplicate));
     const fallbackCategory = presetCategory || dynamicDeaconCategories[0]?.id || 'evento_especial';
     if (item) {
       const resolvedMeta = getDeaconCategoryMeta(item, infoForm.schedules);
+      const cleanBaseService = (item.serviceName || '').replace(/\s*\(cópia\)$/i, '').trim();
       setEditingDeaconId(duplicate ? null : item.id);
       setDeaconForm({
         category: resolvedMeta.id,
         date: duplicate ? new Date().toISOString().split('T')[0] : item.date,
-        serviceName: item.serviceName,
+        serviceName: duplicate ? `${cleanBaseService} (cópia)` : item.serviceName,
         time: formatTimeStandard(item.time),
         coordinator: item.coordinator,
         coordinatorPhone: item.coordinatorPhone || '',
@@ -977,10 +987,11 @@ export const ManagerView: React.FC = () => {
 
   const handleSelectDeaconCategoryInModal = (cat: DeaconScheduleCategory) => {
     const defaults = getCategoryDefaultValues(cat);
+    const cleanDefaultName = (defaults.serviceName || '').replace(/\s*\(cópia\)$/i, '').trim();
     setDeaconForm((prev) => ({
       ...prev,
       category: cat,
-      serviceName: defaults.serviceName,
+      serviceName: isDuplicatingDeacon ? `${cleanDefaultName} (cópia)` : defaults.serviceName,
       time: defaults.time
     }));
   };
@@ -990,6 +1001,8 @@ export const ManagerView: React.FC = () => {
       showToast('Preencha data, nome do culto e diácono coordenador.', 'error');
       return;
     }
+
+    const finalStatus: PublicationStatus = isDuplicatingDeacon ? 'draft' : status;
 
     const parseTeam = (str: string) =>
       str
@@ -1008,7 +1021,7 @@ export const ManagerView: React.FC = () => {
       offeringAndCommunionTeam: parseTeam(offeringInput),
       parkingAndOrderTeam: parseTeam(parkingInput),
       notes: deaconForm.notes || undefined,
-      status
+      status: finalStatus
     };
 
     if (editingDeaconId) {
@@ -1017,12 +1030,13 @@ export const ManagerView: React.FC = () => {
       addDeaconSchedule(payload);
     }
 
+    setIsDuplicatingDeacon(false);
     setDeaconModalOpen(false);
   };
 
   const handleSaveDeaconSchedule = (e: React.FormEvent) => {
     e.preventDefault();
-    handleSaveDeaconScheduleWithStatus(deaconForm.status || 'published');
+    handleSaveDeaconScheduleWithStatus(isDuplicatingDeacon ? 'draft' : deaconForm.status || 'published');
   };
 
   // 4. Banner Handlers
@@ -2886,6 +2900,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                         <Copy className="w-3.5 h-3.5" />
                         <span>Duplicar</span>
                       </button>
+                      {!isDraft && (
+                        <button
+                          type="button"
+                          onClick={() => updateBulletin(b.id, { status: 'draft', isCurrent: false })}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg flex items-center gap-1"
+                          title="Despublicar e voltar para rascunho"
+                        >
+                          <span>Voltar para rascunho</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleOpenBulletinModal(b)}
@@ -3187,6 +3211,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                                   }`}
                                 >
                                   {ban.isActive ? 'Ligado' : 'Desligado'}
+                                </button>
+                              )}
+                              {!isDraft && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateBanner(ban.id, { status: 'draft', isActive: false })}
+                                  className="px-2.5 py-1 text-[11px] font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg flex items-center gap-1"
+                                  title="Despublicar e voltar para rascunho"
+                                >
+                                  <span>Voltar para rascunho</span>
                                 </button>
                               )}
                               <button
@@ -3658,6 +3692,16 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                           <Copy className="w-3.5 h-3.5" />
                           <span>Duplicar</span>
                         </button>
+                        {!isDraft && (
+                          <button
+                            type="button"
+                            onClick={() => updateDeaconSchedule(item.id, { status: 'draft' })}
+                            className="px-3 py-1.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 text-xs font-semibold flex items-center gap-1"
+                            title="Despublicar e voltar para rascunho"
+                          >
+                            <span>Voltar para rascunho</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleOpenDeaconModal(item)}
@@ -3797,7 +3841,11 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-stone-900 text-base">
-                    {editingBulletinId ? 'Editar Boletim Semanal' : 'Novo Boletim Semanal'}
+                    {isDuplicatingBulletin
+                      ? 'Duplicar Boletim'
+                      : editingBulletinId
+                      ? 'Editar Boletim Semanal'
+                      : 'Novo Boletim Semanal'}
                   </h3>
                   {editingBulletinId && formatLastEditedLabel(bulletinForm) && (
                     <p className="text-[11px] text-stone-500 mt-0.5">
@@ -3805,7 +3853,13 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     </p>
                   )}
                 </div>
-                <button onClick={() => setBulletinModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                <button
+                  onClick={() => {
+                    setIsDuplicatingBulletin(false);
+                    setBulletinModalOpen(false);
+                  }}
+                  className="p-1 text-stone-400 hover:text-stone-700"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -3952,7 +4006,10 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 <div className="pt-3 border-t border-stone-200 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setBulletinModalOpen(false)}
+                    onClick={() => {
+                      setIsDuplicatingBulletin(false);
+                      setBulletinModalOpen(false);
+                    }}
                     className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
                   >
                     Cancelar
@@ -3960,17 +4017,23 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   <button
                     type="button"
                     onClick={() => handleSaveBulletinWithStatus('draft')}
-                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl"
+                    className={`px-4 py-2 text-xs font-bold rounded-xl ${
+                      isDuplicatingBulletin
+                        ? 'text-white bg-[#344E41] hover:bg-[#284136] px-5'
+                        : 'text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300'
+                    }`}
                   >
-                    Salvar rascunho
+                    {isDuplicatingBulletin ? 'Salvar cópia como rascunho' : 'Salvar rascunho'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveBulletinWithStatus('published')}
-                    className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
-                  >
-                    Publicar
-                  </button>
+                  {!isDuplicatingBulletin && (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBulletinWithStatus('published')}
+                      className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                    >
+                      Publicar
+                    </button>
+                  )}
                 </div>
               </form>
             </div>
@@ -4318,7 +4381,11 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
               <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-stone-900 text-base">
-                    {editingDeaconId ? 'Editar Escala de Diáconos' : 'Nova Escala de Diáconos'}
+                    {isDuplicatingDeacon
+                      ? 'Duplicar Escala'
+                      : editingDeaconId
+                      ? 'Editar Escala de Diáconos'
+                      : 'Nova Escala de Diáconos'}
                   </h3>
                   {editingDeaconId && formatLastEditedLabel(deaconForm) && (
                     <p className="text-[11px] text-stone-500 mt-0.5">
@@ -4326,7 +4393,13 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                     </p>
                   )}
                 </div>
-                <button onClick={() => setDeaconModalOpen(false)} className="p-1 text-stone-400 hover:text-stone-700">
+                <button
+                  onClick={() => {
+                    setIsDuplicatingDeacon(false);
+                    setDeaconModalOpen(false);
+                  }}
+                  className="p-1 text-stone-400 hover:text-stone-700"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -4465,7 +4538,10 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                 <div className="pt-3 border-t border-stone-200 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setDeaconModalOpen(false)}
+                    onClick={() => {
+                      setIsDuplicatingDeacon(false);
+                      setDeaconModalOpen(false);
+                    }}
                     className="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl"
                   >
                     Cancelar
@@ -4473,17 +4549,23 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                   <button
                     type="button"
                     onClick={() => handleSaveDeaconScheduleWithStatus('draft')}
-                    className="px-4 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl"
+                    className={`px-4 py-2 text-xs font-bold rounded-xl ${
+                      isDuplicatingDeacon
+                        ? 'text-white bg-[#344E41] hover:bg-[#284136] px-5'
+                        : 'text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300'
+                    }`}
                   >
-                    Salvar rascunho
+                    {isDuplicatingDeacon ? 'Salvar cópia como rascunho' : 'Salvar rascunho'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSaveDeaconScheduleWithStatus('published')}
-                    className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
-                  >
-                    Publicar
-                  </button>
+                  {!isDuplicatingDeacon && (
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDeaconScheduleWithStatus('published')}
+                      className="px-5 py-2 text-xs font-bold text-white bg-[#344E41] hover:bg-[#284136] rounded-xl"
+                    >
+                      Publicar
+                    </button>
+                  )}
                 </div>
               </form>
             </div>
