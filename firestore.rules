@@ -134,7 +134,8 @@ service cloud.firestore {
     // Leitura pública APENAS de igrejas com status == 'ativa' (ou membro da equipe / owner)
     // Alteração de dados institucionais e equipe APENAS por Administrador da igreja ou Owner
     match /churches/{churchId} {
-      allow read: if resource.data.status == 'ativa' || isChurchEditor(churchId);
+      allow get: if resource == null || resource.data.status == 'ativa' || isChurchEditor(churchId);
+      allow list: if resource.data.status == 'ativa' || isChurchEditor(churchId);
       allow create: if isAuthenticated() && (
         isPlatformOwner() ||
         (

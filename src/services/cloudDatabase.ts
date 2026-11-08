@@ -485,19 +485,30 @@ export class CloudChurchService {
       return null;
     }
     try {
-      const directSnap = await getDoc(doc(db, 'churches', normalized));
-      if (directSnap.exists()) {
-        return { ...(directSnap.data() as ChurchTenant), id: directSnap.id };
+      // 1. Direct document lookup
+      try {
+        const directSnap = await getDoc(doc(db, 'churches', normalized));
+        if (directSnap.exists()) {
+          return { ...(directSnap.data() as ChurchTenant), id: directSnap.id };
+        }
+      } catch {
+        // Continue to query by slug if direct ID check fails
       }
-      const q = query(collection(db, 'churches'), where('slug', '==', normalized));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const first = snap.docs[0];
-        return { ...(first.data() as ChurchTenant), id: first.id };
+
+      // 2. Query by slug
+      try {
+        const q = query(collection(db, 'churches'), where('slug', '==', normalized));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const first = snap.docs[0];
+          return { ...(first.data() as ChurchTenant), id: first.id };
+        }
+      } catch {
+        // Ignore if query fails
       }
+
       return null;
-    } catch (e) {
-      handleFirestoreError(e, OperationType.GET, `churches/${normalized}`);
+    } catch {
       return null;
     }
   }
