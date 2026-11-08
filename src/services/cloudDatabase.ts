@@ -850,17 +850,45 @@ export class CloudChurchService {
 
       if (emailLower && isVerified) {
         try {
-          const qInvited = query(
-            collection(db, 'churches'),
-            where('managerEmails', 'array-contains', emailLower)
-          );
-          const invitedSnap = await getDocs(qInvited);
-          for (const chDoc of invitedSnap.docs) {
-            matchedChurchIds.push(chDoc.id);
-            const chData = chDoc.data() as ChurchTenant;
+          const churchesToProcess = new Map<string, ChurchTenant>();
+
+          // 1. Query churches where managerEmails array-contains this email
+          try {
+            const qInvited = query(
+              collection(db, 'churches'),
+              where('managerEmails', 'array-contains', emailLower)
+            );
+            const invitedSnap = await getDocs(qInvited);
+            for (const chDoc of invitedSnap.docs) {
+              churchesToProcess.set(chDoc.id, { ...(chDoc.data() as ChurchTenant), id: chDoc.id });
+            }
+          } catch {
+            // ignore
+          }
+
+          // 2. Also check active churches to catch any church where teamMembers or ownerEmail matches
+          try {
+            const qActive = query(collection(db, 'churches'), where('status', '==', 'ativa'));
+            const activeSnap = await getDocs(qActive);
+            for (const chDoc of activeSnap.docs) {
+              const chData = chDoc.data() as ChurchTenant;
+              const hasInTeam = chData.teamMembers?.some(
+                (m) => m.email?.toLowerCase().trim() === emailLower
+              );
+              const isOwner = chData.ownerEmail?.toLowerCase().trim() === emailLower;
+              if (hasInTeam || isOwner) {
+                churchesToProcess.set(chDoc.id, { ...chData, id: chDoc.id });
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          for (const [chDocId, chData] of churchesToProcess.entries()) {
+            matchedChurchIds.push(chDocId);
             if (!primaryChurchId) {
-              primaryChurchId = chDoc.id;
-              primaryChurchSlug = chData.slug || chDoc.id;
+              primaryChurchId = chDocId;
+              primaryChurchSlug = chData.slug || chDocId;
             }
 
             // Activate pending team invite on this church with the verified user's UID and Name
@@ -899,7 +927,7 @@ export class CloudChurchService {
                 [...norm.managerUids, user.uid]
               );
               await setDoc(
-                doc(db, 'churches', chDoc.id),
+                doc(db, 'churches', chDocId),
                 stripUndefined({
                   teamMembers: recomputed.teamMembers,
                   adminEmails: recomputed.adminEmails,
@@ -915,7 +943,7 @@ export class CloudChurchService {
 
             // Also mark invite in subcollection churches/{churchId}/convites/{email} as accepted if present
             try {
-              const inviteRef = doc(db, 'churches', chDoc.id, 'convites', emailLower);
+              const inviteRef = doc(db, 'churches', chDocId, 'convites', emailLower);
               const inviteSnap = await getDoc(inviteRef);
               if (inviteSnap.exists()) {
                 const invData = inviteSnap.data() as ChurchInviteDoc;

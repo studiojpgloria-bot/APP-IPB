@@ -3561,6 +3561,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID="${activeFirebaseConfig.messagingSenderId}"`;
                               confirmLabel: isPending ? 'Sim, Cancelar Convite' : 'Sim, Remover',
                               isDestructive: true,
                               onConfirm: () => {
+                                setLastInvitedMember(null);
                                 void removeCoManagerEmail(member.email);
                               }
                             })

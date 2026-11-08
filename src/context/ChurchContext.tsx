@@ -1142,7 +1142,9 @@ export const ChurchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cleanEmail
     );
     if (emailSent) {
-      showToast(`Link de login enviado por e-mail para ${cleanEmail}!`);
+      showToast(
+        `Novo link gerado e enviado para ${cleanEmail}! Atenção: links anteriores podem deixar de funcionar.`
+      );
     } else {
       showToast(
         `Não foi possível enviar o e-mail automático (${
